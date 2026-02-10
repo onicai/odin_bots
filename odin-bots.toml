@@ -1,0 +1,18 @@
+# odin-bots configuration
+# See: https://github.com/onicai/odin_bots
+
+[settings]
+# See README-security.md for details
+verify_certificates = false
+cache_sessions = true
+
+# Bot definitions
+# Each bot gets its own trading identity on Odin.Fun.
+[bots.bot-1]
+description = "Bot 1"
+
+[bots.bot-2]
+description = "Bot 2"
+
+[bots.bot-3]
+description = "Bot 3"

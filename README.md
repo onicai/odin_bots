@@ -1,53 +1,65 @@
-# odin-bots
+[![cicd](https://github.com/onicai/odin_bots/actions/workflows/cicd.yml/badge.svg)](https://github.com/onicai/odin_bots/actions/workflows/cicd.yml)
 
-Your trading bot for Bitcoin Runes on [Odin.fun](https://odin.fun).
+<p align="center">
+  <img src="brand/logo/transparent_with_tagline_SMALL.png" alt="ODIN-BOTS" width="400">
+</p>
 
-## Quick Start
+---
 
-```bash
+```
 pip install odin-bots
-
-mkdir my-bots && cd my-bots
-odin-bots init
-odin-bots wallet create
-# Fund your wallet from Unisat, Sparrow, Electrum, BlueWallet, Oisy, NNS, Plug, etc.
-odin-bots wallet receive
 ```
 
-After funding your wallet:
-
-```bash
-# Deposit and trade with the default bot ("bot-1")
-odin-bots deposit 5000
-odin-bots trade buy 29m8 1000
-
-# Or specify a bot by name
-odin-bots --bot bot-2 deposit 5000
-odin-bots --bot bot-2 trade buy 29m8 1000
+Note: On macOS Apple Silicon, install `automake` and `libtool` before running `pip install`:
+```
+brew install automake libtool
 ```
 
-## Commands
+# Setup (one time):
 
-```bash
-# Setup
-odin-bots init                               # Initialize project
-odin-bots wallet create                      # Generate wallet identity
-odin-bots wallet receive                     # Show how to fund the wallet
-odin-bots wallet info                        # Show wallet address and balance
-odin-bots wallet send <sats|all> <address>   # Send funds to an address
+    odin-bots init             Configures your project with 3 bots
+                               Stored in odin-bots.toml
 
-# Trading (operates on default bot, or use --bot <name>)
-odin-bots balances                           # Show balances
-odin-bots deposit <sats>                     # Deposit ckBTC into Odin
-odin-bots withdraw <sats|all>                # Withdraw from Odin to ckBTC
-odin-bots trade buy <token> <sats>           # Buy tokens
-odin-bots trade sell <token> <amount>        # Sell tokens
+    odin-bots wallet create    Generate wallet identity
+                               Stored in .wallet/identity-private.pem
 
-# Multi-bot (--bot works with all commands)
-odin-bots --bot bot-2 balances
-odin-bots --bot bot-2 deposit 5000
-odin-bots --bot bot-2 trade buy 29m8 1000
-```
+# How to use your bots:
+
+    Step 1. Fund your odin-bots wallet:
+            odin-bots wallet receive
+            Send ckBTC or BTC to the address shown.
+
+    Step 2. Fund your bots (deposits ckBTC into Odin.Fun):
+            odin-bots --bot <name> fund <amount>      # in sats
+            odin-bots --all-bots fund <amount>
+
+    Step 3. Buy Runes on Odin.Fun:
+            odin-bots --bot <name> trade buy <token-id> <amount>
+            odin-bots --all-bots trade buy <token-id> <amount>
+
+    Step 4. Sell Runes on Odin.Fun:
+            odin-bots --bot <name> trade sell <token-id> <amount>
+            odin-bots --all-bots trade sell <token-id> <amount>
+            # to sell all holdings of a token
+            odin-bots --bot <name> trade sell <token-id> all
+            odin-bots --all-bots trade sell <token-id> all
+            # to sell all holdings of all tokens
+            odin-bots --bot <name> trade sell all-tokens all
+            odin-bots --all-bots trade sell all-tokens all
+
+    Step 5. Withdraw ckBTC from Odin.Fun back to wallet:
+            odin-bots --bot <name> withdraw <amount>
+            odin-bots --all-bots withdraw <amount>
+            # to sweep all ckBTC back into the wallet
+            odin-bots --all-bots withdraw all
+
+    Or use sweep to sell all tokens + withdraw in one command:
+            odin-bots --bot <name> sweep
+            odin-bots --all-bots sweep
+
+    Step 6. Send ckBTC from wallet to an external ckBTC or BTC account:
+            odin-bots wallet send <amount> <address>
+            (supports both ICRC-1 and BTC addresses)
 
 ## Configuration
 
@@ -55,7 +67,6 @@ odin-bots --bot bot-2 trade buy 29m8 1000
 
 ```toml
 [settings]
-default_bot = "bot-1"
 
 [bots.bot-1]
 description = "Bot 1"
@@ -67,7 +78,7 @@ description = "Bot 2"
 description = "Bot 3"
 ```
 
-Each bot gets its own wallet and trading identity. Add or remove `[bots.*]` sections as needed.
+Each bot gets its own trading identity on Odin.Fun. Add or remove `[bots.*]` sections as needed.
 
 ## Project Layout
 
@@ -77,18 +88,25 @@ my-bots/
 ├── odin-bots.toml         # bot config
 ├── .wallet/               # identity key (BACK UP!)
 │   └── identity-private.pem
-└── .cache/                # session cache (auto-created)
+└── .cache/                # delegated identities (auto-created)
+    ├── session_bot-1.json # no backup needed — regenerated
+    ├── session_bot-2.json # when expired (24h lifetime)
+    └── session_bot-3.json
 ```
 
 ## Open Source & Verifiable
 
 odin-bots is powered by the onicai ckSigner canister: [`g7qkb-iiaaa-aaaar-qb3za-cai`](https://dashboard.internetcomputer.org/canister/g7qkb-iiaaa-aaaar-qb3za-cai)
 
-The canister code is fully open source with a reproducible build, available at [github.com/onicai/ChainFusionAI](https://github.com/onicai/ChainFusionAI).
+The canister code is fully open source with a reproducible build, available at [github.com/onicai/PoAIW](https://github.com/onicai/PoAIW) -> ckSigner branch.
 
 ## How It Works
 
 See [README-how-it-works.md](README-how-it-works.md) for technical details.
+
+## Security
+
+See [README-security.md](README-security.md) for security considerations and best practices.
 
 ## Contribute
 
@@ -100,7 +118,19 @@ This project is in **alpha**. APIs may change without notice.
 
 The software and hosted services are provided "as is", without warranty of any kind. Use at your own risk. The authors and onicai are not liable for any losses — including but not limited to loss of funds, keys, or data — incurred through use of this software or the hosted canister services. No guarantee of availability, correctness, or security is made. You are solely responsible for evaluating the suitability of these services for your use case and for complying with all applicable laws and regulations in your jurisdiction.
 
+## Reference
+
+The Bitcoin rune trading platform is [Odin Fun](https://odin.fun/)
+
+## Supported Platforms
+
+| Platform | Python 3.11 | Python 3.12 | Python 3.13 |
+| --- | --- | --- | --- |
+| Ubuntu (x86-64) | yes | yes | yes |
+| macOS Apple Silicon | yes | yes | yes |
+| macOS Intel | yes | yes | yes |
+| Windows (x86-64) | yes | yes | yes |
+
 ## License
 
 MIT
-# odin_bots

@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=71", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odin-bots"
+version = "0.3.0"
+description = "Bitcoin rune trading CLI & SDK"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "icpp-pro", email = "icpp@icpp.world" }]
+maintainers = [{ name = "icpp-pro", email = "icpp@icpp.world" }]
+keywords = [
+    "bitcoin",
+    "icp",
+    "internet-computer",
+    "odin",
+    "trading",
+    "defi",
+    "siwb",
+    "ckbtc",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    "typer>=0.21.1",
+    "requests>=2.31",
+    "curl_cffi>=0.7",
+    "btclib>=2023.7",
+    "bitcoin-utils>=0.7.3",
+    "icp-py-core>=2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "build>=1.0",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/onicai/odin_bots"
+Repository = "https://github.com/onicai/odin_bots"
+Documentation = "https://github.com/onicai/odin_bots#readme"
+Issues = "https://github.com/onicai/odin_bots/issues"
+
+[project.scripts]
+odin-bots = "odin_bots.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["odin_bots*"]
+exclude = ["canisters*"]
+
+[tool.setuptools.package-data]
+odin_bots = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
