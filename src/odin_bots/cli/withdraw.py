@@ -175,8 +175,6 @@ def run_withdraw(bot_name: str, amount: str, verbose: bool = False):
     if bot_ckbtc <= CKBTC_FEE:
         print(f"\n  Note: ckBTC balance too low to transfer to wallet. "
               f"Withdrawal may be pending.")
-        from odin_bots.cli.balance import print_bot_summary
-        print_bot_summary(bot_name, verbose=verbose)
         return
 
     # -----------------------------------------------------------------------
@@ -209,10 +207,6 @@ def run_withdraw(bot_name: str, amount: str, verbose: bool = False):
     wallet_balance = get_balance(icrc1_canister__anon, wallet_principal)
     print(f"\n✅ Withdrawal complete!")
     print(f"Wallet balance: {_fmt(wallet_balance)}")
-
-    # Show updated holdings
-    from odin_bots.cli.balance import print_bot_summary
-    print_bot_summary(bot_name, verbose=verbose)
 
 
 def main():

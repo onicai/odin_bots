@@ -18,7 +18,9 @@ import typer
 
 from odin_bots.config import PEM_FILE, _project_root, get_verify_certificates
 
-wallet_app = typer.Typer(no_args_is_help=True, result_callback=lambda *a, **kw: _print_backup_warning())
+wallet_app = typer.Typer(no_args_is_help=True)
+
+_show_backup_warning = False
 
 WALLET_DIR = ".wallet"
 
@@ -54,6 +56,7 @@ def _pem_path() -> Path:
 WITHDRAWALS_FILE = ".wallet/btc_withdrawals.json"
 
 MEMPOOL_TX_URL = "https://mempool.space/tx/"
+MEMPOOL_ADDRESS_URL = "https://mempool.space/address/"
 
 
 def _withdrawals_path() -> Path:
@@ -180,9 +183,14 @@ def balance(
     from odin_bots.cli import _resolve_bot_names, state
     from odin_bots.cli.balance import run_all_balances
 
-    bot_names = _resolve_bot_names(bot, all_bots)
-    run_all_balances(bot_names=bot_names, token_id=token_id,
-                     verbose=state.verbose)
+    if bot is None and not all_bots and state.bot_name is None and not state.all_bots:
+        # No bot flag specified — show wallet info only (no bot login needed)
+        from odin_bots.cli.balance import run_wallet_balance
+        run_wallet_balance()
+    else:
+        bot_names = _resolve_bot_names(bot, all_bots)
+        run_all_balances(bot_names=bot_names, token_id=token_id,
+                         verbose=state.verbose)
 
 
 @wallet_app.command()
@@ -198,7 +206,8 @@ def info():
         btc_usd_rate = None
 
     from odin_bots.cli.balance import _print_wallet_info
-    _print_wallet_info(btc_usd_rate)
+    _print_wallet_info(btc_usd_rate, verbose=True)
+    _print_backup_warning()
 
 
 @wallet_app.command()

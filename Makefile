@@ -39,7 +39,7 @@ install-blst:
 			rm -rf $(BLST_DIR); \
 			exit 1; \
 		fi
-	cd $(BLST_DIR)/bindings/python && python3 run.me || true
+	(cd $(BLST_DIR)/bindings/python && python3 run.me) || true
 	cp $(BLST_DIR)/bindings/python/blst.py \
 		$$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")/
 	cp $(BLST_DIR)/bindings/python/_blst*.so \

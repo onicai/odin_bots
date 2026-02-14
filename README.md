@@ -28,16 +28,23 @@ brew install automake libtool
     Step 1. Fund your odin-bots wallet:
             odin-bots wallet receive
             Send ckBTC or BTC to the address shown.
+            BTC deposits require min 10,000 sats and ~6 confirmations.
 
-    Step 2. Fund your bots (deposits ckBTC into Odin.Fun):
+    Step 2. Check your wallet balance:
+            odin-bots wallet balance
+
+    Step 3. Fund your bots (deposits ckBTC into Odin.Fun):
             odin-bots --bot <name> fund <amount>      # in sats
             odin-bots --all-bots fund <amount>
 
-    Step 3. Buy Runes on Odin.Fun:
+    Step 4. Buy Runes on Odin.Fun:
             odin-bots --bot <name> trade buy <token-id> <amount>
             odin-bots --all-bots trade buy <token-id> <amount>
 
-    Step 4. Sell Runes on Odin.Fun:
+    Step 5. Check your balances (wallet + bots):
+            odin-bots --all-bots balance
+
+    Step 6. Sell Runes on Odin.Fun:
             odin-bots --bot <name> trade sell <token-id> <amount>
             odin-bots --all-bots trade sell <token-id> <amount>
             # to sell all holdings of a token
@@ -47,7 +54,7 @@ brew install automake libtool
             odin-bots --bot <name> trade sell all-tokens all
             odin-bots --all-bots trade sell all-tokens all
 
-    Step 5. Withdraw ckBTC from Odin.Fun back to wallet:
+    Step 7. Withdraw ckBTC from Odin.Fun back to wallet:
             odin-bots --bot <name> withdraw <amount>
             odin-bots --all-bots withdraw <amount>
             # to sweep all ckBTC back into the wallet
@@ -57,7 +64,7 @@ brew install automake libtool
             odin-bots --bot <name> sweep
             odin-bots --all-bots sweep
 
-    Step 6. Send ckBTC from wallet to an external ckBTC or BTC account:
+    Step 8. Send ckBTC from wallet to an external ckBTC or BTC account:
             odin-bots wallet send <amount> <address>
             (supports both ICRC-1 and BTC addresses)
 

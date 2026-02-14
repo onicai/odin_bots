@@ -199,7 +199,7 @@ def _print_padded_table(headers, rows):
         print(fmt.format(*row))
 
 
-def _print_wallet_info(btc_usd_rate: float | None) -> int:
+def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False) -> int:
     """Print full wallet info: ckBTC balance, pending BTC, addresses, PEM path.
 
     Auto-triggers BTC→ckBTC conversion when pending deposits are detected.
@@ -230,6 +230,10 @@ def _print_wallet_info(btc_usd_rate: float | None) -> int:
     # ckBTC balance
     icrc1_canister__anon = create_icrc1_canister(anon_agent)
     balance = get_balance(icrc1_canister__anon, principal)
+    print()
+    print("=" * 60)
+    print("Wallet")
+    print("=" * 60)
     print(f"\nICRC-1 ckBTC: {fmt_sats(balance, btc_usd_rate)}")
 
     # ckBTC minter section
@@ -252,7 +256,8 @@ def _print_wallet_info(btc_usd_rate: float | None) -> int:
 
     # BTC withdrawal status tracking
     from odin_bots.cli.wallet import (
-        MEMPOOL_TX_URL, load_withdrawal_statuses, remove_withdrawal,
+        MEMPOOL_TX_URL, MEMPOOL_ADDRESS_URL,
+        load_withdrawal_statuses, remove_withdrawal,
     )
     withdrawals = load_withdrawal_statuses()
     active_withdrawals = []
@@ -281,37 +286,69 @@ def _print_wallet_info(btc_usd_rate: float | None) -> int:
         except Exception:
             pass
 
+    # Fetch deposit address (needed for mempool check and display)
+    btc_address = get_btc_address(minter_anon, principal)
+
     print()
     print("ckBTC minter:")
 
+    # Query mempool.space for BTC on the deposit address
+    address_btc = 0
+    try:
+        import requests as _requests
+        addr_resp = _requests.get(
+            f"https://mempool.space/api/address/{btc_address}", timeout=10
+        )
+        addr_data = addr_resp.json()
+        chain = addr_data.get("chain_stats", {})
+        mempool = addr_data.get("mempool_stats", {})
+        address_btc = (
+            chain.get("funded_txo_sum", 0) - chain.get("spent_txo_sum", 0)
+            + mempool.get("funded_txo_sum", 0) - mempool.get("spent_txo_sum", 0)
+        )
+    except Exception:
+        pass
+
     # Incoming BTC (deposits pending conversion to ckBTC)
-    print(f"  \u2022 Incoming BTC: {fmt_sats(pending, btc_usd_rate)}")
-    if pending > 0:
-        try:
-            result = check_btc_deposits(
-                create_ckbtc_minter(Agent(identity, client)), principal
-            )
-            if isinstance(result, dict) and "Ok" in result:
-                minted = result["Ok"]
-                if isinstance(minted, list):
-                    total_minted = sum(u.get("amount", 0) for u in minted)
-                    print(f"    Converted {fmt_sats(total_minted, btc_usd_rate)} to ckBTC!")
-                    balance = get_balance(icrc1_canister__anon, principal)
-                    print(f"    Updated ckBTC balance: {fmt_sats(balance, btc_usd_rate)}")
+    # Always call update_balance to discover new deposits
+    try:
+        result = check_btc_deposits(
+            create_ckbtc_minter(Agent(identity, client)), principal
+        )
+        if isinstance(result, dict) and "Ok" in result:
+            minted = result["Ok"]
+            if isinstance(minted, list):
+                total_minted = sum(u.get("amount", 0) for u in minted)
+                print(f"  \u2022 Incoming BTC: converted {fmt_sats(total_minted, btc_usd_rate)} to ckBTC!")
+                balance = get_balance(icrc1_canister__anon, principal)
+                print(f"    Updated ckBTC balance: {fmt_sats(balance, btc_usd_rate)}")
+            else:
+                print(f"  \u2022 Incoming BTC: {fmt_sats(pending, btc_usd_rate)}")
+        elif isinstance(result, dict) and "Err" in result:
+            err = result["Err"]
+            if isinstance(err, dict) and "NoNewUtxos" in err:
+                nfo = err["NoNewUtxos"]
+                required = nfo.get("required_confirmations", "?")
+                current = nfo.get("current_confirmations")
+                incoming = address_btc if address_btc > 0 else pending
+                if current is not None and len(current) > 0:
+                    print(f"  \u2022 Incoming BTC: {fmt_sats(incoming, btc_usd_rate)} (waiting for confirmations: {current[0]}/{required})")
+                    print(f"    {MEMPOOL_ADDRESS_URL}{btc_address}")
                 else:
-                    print("    Conversion triggered.")
-            elif isinstance(result, dict) and "Err" in result:
-                err = result["Err"]
-                if isinstance(err, dict) and "NoNewUtxos" in err:
-                    nfo = err["NoNewUtxos"]
-                    required = nfo.get("required_confirmations", "?")
-                    current = nfo.get("current_confirmations")
-                    if current is not None and len(current) > 0:
-                        print(f"    Waiting for confirmations: {current[0]}/{required}")
-                    else:
-                        print(f"    Waiting for confirmations ({required} required)")
-        except Exception as e:
-            print(f"    Could not trigger conversion: {e}")
+                    print(f"  \u2022 Incoming BTC: {fmt_sats(incoming, btc_usd_rate)}")
+            else:
+                print(f"  \u2022 Incoming BTC: {fmt_sats(pending, btc_usd_rate)}")
+        else:
+            print(f"  \u2022 Incoming BTC: {fmt_sats(pending, btc_usd_rate)}")
+    except Exception:
+        print(f"  \u2022 Incoming BTC: {fmt_sats(pending, btc_usd_rate)}")
+
+    # Show unconfirmed mempool transactions (not yet seen by minter)
+    if pending == 0 and address_btc > 0:
+        mempool_unconfirmed = mempool.get("funded_txo_sum", 0)
+        if mempool_unconfirmed > 0:
+            print(f"    Unconfirmed in mempool: {fmt_sats(mempool_unconfirmed, btc_usd_rate)}")
+            print(f"    {MEMPOOL_ADDRESS_URL}{btc_address}")
 
     # Outgoing BTC (ckBTC in minter account for BTC sends)
     outgoing_line = f"  \u2022 Outgoing BTC: {fmt_sats(withdrawal_balance, btc_usd_rate)}"
@@ -346,14 +383,14 @@ def _print_wallet_info(btc_usd_rate: float | None) -> int:
             except Exception:
                 pass
 
-    # Addresses
-    btc_address = get_btc_address(minter_anon, principal)
-    print()
-    print(f"Wallet principal: {principal}")
-    print(f"Wallet BTC deposit address: {btc_address} (min deposit: {fmt_sats(10_000, btc_usd_rate)})")
+    if verbose:
+        # Addresses
+        print()
+        print(f"Wallet principal: {principal}")
+        print(f"Wallet BTC deposit address: {btc_address} (min deposit: {fmt_sats(10_000, btc_usd_rate)})")
 
-    print()
-    print(f"PEM file: {pem_path}\n")
+        print()
+        print(f"PEM file: {pem_path}\n")
 
     return balance, pending, withdrawal_balance
 
@@ -363,10 +400,6 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
                           wallet_pending_sats: int = 0,
                           wallet_withdrawal_sats: int = 0):
     """Print the Bot Holdings at Odin.Fun table."""
-    print("\n" + "=" * 60)
-    print("Bot Holdings at Odin.Fun")
-    print("=" * 60)
-
     # Collect all unique token tickers across all bots
     all_tickers = []
     ticker_to_id = {}
@@ -451,15 +484,12 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
 # Entry points
 # ---------------------------------------------------------------------------
 
-def print_bot_summary(bot_name: str, verbose: bool = False):
-    """Print wallet balance + holdings table for a single bot.
-
-    Reused by fund, withdraw, and trade to show fresh balances after an operation.
-    """
-    data = collect_balances(bot_name, verbose=verbose)
+def run_wallet_balance():
+    """Show wallet info only (no bot login required)."""
+    if not require_wallet():
+        return
     btc_usd_rate = _fetch_btc_usd_rate()
-    wallet_balance, wallet_pending, wallet_withdrawal = _print_wallet_info(btc_usd_rate)
-    _print_holdings_table([data], btc_usd_rate, wallet_balance, wallet_pending, wallet_withdrawal)
+    _print_wallet_info(btc_usd_rate)
 
 
 def run_all_balances(bot_names: list, token_id: str = "29m8",
@@ -475,6 +505,12 @@ def run_all_balances(bot_names: list, token_id: str = "29m8",
         return
     btc_usd_rate = _fetch_btc_usd_rate()
     wallet_balance, wallet_pending, wallet_withdrawal = _print_wallet_info(btc_usd_rate)
+
+    print()
+    print("=" * 60)
+    print("Bot Holdings at Odin.Fun")
+    print("=" * 60)
+
     all_data = []
     for bot_name in bot_names:
         try:

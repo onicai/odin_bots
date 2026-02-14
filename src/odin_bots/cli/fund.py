@@ -204,5 +204,3 @@ def run_fund(bot_names: list, amount: int, verbose: bool = False):
 
     if funded:
         print(f"\n✅ Funded {len(funded)} bot(s) successfully!")
-        from odin_bots.cli.balance import run_all_balances
-        run_all_balances(bot_names=funded, verbose=verbose)

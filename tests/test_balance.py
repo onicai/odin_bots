@@ -11,7 +11,6 @@ from odin_bots.cli.balance import (
     _print_holdings_table,
     _print_wallet_info,
     collect_balances,
-    print_bot_summary,
     run_all_balances,
 )
 from odin_bots.config import fmt_sats
@@ -89,7 +88,6 @@ class TestPrintHoldingsTable:
         data = [BotBalances("bot-1", "abc", odin_sats=1000.0)]
         _print_holdings_table(data, btc_usd_rate=100_000.0)
         output = capsys.readouterr().out
-        assert "Bot Holdings at Odin.Fun" in output
         assert "bot-1" in output
         assert "1,000 sats" in output
 
@@ -165,7 +163,7 @@ class TestPrintWalletInfo:
         )
         MockId.from_pem.return_value = mock_identity
 
-        _print_wallet_info(100_000.0)
+        _print_wallet_info(100_000.0, verbose=True)
         output = capsys.readouterr().out
         assert "ICRC-1 ckBTC:" in output
         assert "50,000 sats" in output
@@ -301,18 +299,3 @@ class TestRunAllBalances:
         assert "Failed to get balances" in output
 
 
-# ---------------------------------------------------------------------------
-# print_bot_summary
-# ---------------------------------------------------------------------------
-
-class TestPrintBotSummary:
-    @patch("odin_bots.cli.balance._print_holdings_table")
-    @patch("odin_bots.cli.balance._print_wallet_info", return_value=(50000, 0, 0))
-    @patch("odin_bots.cli.balance._fetch_btc_usd_rate", return_value=100_000.0)
-    @patch("odin_bots.cli.balance.collect_balances")
-    def test_prints_wallet_and_holdings(self, mock_collect, mock_rate,
-                                         mock_wallet, mock_holdings):
-        mock_collect.return_value = BotBalances("bot-1", "abc")
-        print_bot_summary("bot-1")
-        mock_wallet.assert_called_once()
-        mock_holdings.assert_called_once()

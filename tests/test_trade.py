@@ -18,7 +18,6 @@ def _make_mock_auth(bot_principal="bot-principal-abc"):
 
 
 class TestRunTradeSuccess:
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.unwrap_canister_result", side_effect=lambda x: x)
     @patch(f"{M}.patch_delegate_sender")
@@ -29,7 +28,7 @@ class TestRunTradeSuccess:
     @patch(f"{M}.Client")
     def test_buy(self, MockClient, MockAgent, MockCanister, mock_token_info,
                   mock_load, mock_patch_del, mock_unwrap, mock_rate,
-                  mock_summary, odin_project, capsys):
+                  odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         mock_odin = MagicMock()
         mock_odin.getBalance.side_effect = [5_000_000, 100]  # BTC msat, token
@@ -45,7 +44,6 @@ class TestRunTradeSuccess:
         assert "Trade executed successfully" in output
         mock_odin.token_trade.assert_called_once()
 
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.unwrap_canister_result", side_effect=lambda x: x)
     @patch(f"{M}.patch_delegate_sender")
@@ -56,7 +54,7 @@ class TestRunTradeSuccess:
     @patch(f"{M}.Client")
     def test_sell(self, MockClient, MockAgent, MockCanister, mock_token_info,
                    mock_load, mock_patch_del, mock_unwrap, mock_rate,
-                   mock_summary, odin_project, capsys):
+                   odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         mock_odin = MagicMock()
         mock_odin.getBalance.side_effect = [5_000_000, 500]
@@ -73,7 +71,6 @@ class TestRunTradeSuccess:
 
 
 class TestRunTradeSellAll:
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.unwrap_canister_result", side_effect=lambda x: x)
     @patch(f"{M}.patch_delegate_sender")
@@ -84,7 +81,7 @@ class TestRunTradeSellAll:
     @patch(f"{M}.Client")
     def test_sell_all(self, MockClient, MockAgent, MockCanister, mock_token_info,
                       mock_load, mock_patch_del, mock_unwrap, mock_rate,
-                      mock_summary, odin_project, capsys):
+                      odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         mock_odin = MagicMock()
         mock_odin.getBalance.side_effect = [5_000_000, 99_999]
@@ -194,9 +191,8 @@ class TestRunTradeErrors:
         from odin_bots.cli.trade import run_trade
 
         # Should not raise
-        with patch("odin_bots.cli.balance.print_bot_summary"):
-            run_trade(bot_name="bot-1", action="buy", token_id="29m8",
-                      amount="1000", verbose=False)
+        run_trade(bot_name="bot-1", action="buy", token_id="29m8",
+                  amount="1000", verbose=False)
 
         output = capsys.readouterr().out
         assert "Trade executed successfully" in output

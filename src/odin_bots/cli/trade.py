@@ -216,12 +216,6 @@ def run_trade(bot_name: str, action: str, token_id: str, amount: str,
     print("done")
     print(f"\n✅ Trade executed successfully!")
 
-    # -----------------------------------------------------------------------
-    # Summary — reuse balances tables
-    # -----------------------------------------------------------------------
-    from odin_bots.cli.balance import print_bot_summary
-    print_bot_summary(bot_name, verbose=verbose)
-
 
 def main():
     """CLI entry point for standalone usage."""

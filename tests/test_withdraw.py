@@ -24,7 +24,6 @@ def _make_mock_auth(bot_principal="bot-principal-abc"):
 
 
 class TestRunWithdrawSuccess:
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.transfer", return_value={"Ok": 1})
     @patch(f"{M}.get_balance")
@@ -41,7 +40,6 @@ class TestRunWithdrawSuccess:
                                        mock_patch_del, mock_unwrap,
                                        mock_create_icrc1, mock_get_bal,
                                        mock_transfer, mock_rate,
-                                       mock_summary,
                                        odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         MockId.from_pem.return_value = _make_mock_identity()
@@ -63,7 +61,6 @@ class TestRunWithdrawSuccess:
         assert "Withdrawing: 3,000 sats" in output
         assert "Withdrawal complete" in output
 
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.transfer", return_value={"Ok": 1})
     @patch(f"{M}.get_balance")
@@ -78,7 +75,7 @@ class TestRunWithdrawSuccess:
     def test_withdraw_all(self, MockId, MockClient, MockAgent,
                            MockCanister, mock_load, mock_patch_del,
                            mock_unwrap, mock_create_icrc1, mock_get_bal,
-                           mock_transfer, mock_rate, mock_summary,
+                           mock_transfer, mock_rate,
                            odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         MockId.from_pem.return_value = _make_mock_identity()
@@ -170,7 +167,6 @@ class TestRunWithdrawErrors:
         output = capsys.readouterr().out
         assert "FAILED" in output
 
-    @patch("odin_bots.cli.balance.print_bot_summary")
     @patch(f"{M}.get_btc_to_usd_rate", return_value=100_000.0)
     @patch(f"{M}.get_balance", return_value=5)  # Below fee
     @patch(f"{M}.create_icrc1_canister")
@@ -185,7 +181,6 @@ class TestRunWithdrawErrors:
                                                   mock_patch_del, mock_unwrap,
                                                   mock_create_icrc1,
                                                   mock_get_bal, mock_rate,
-                                                  mock_summary,
                                                   odin_project, capsys):
         mock_load.return_value = _make_mock_auth()
         mock_odin = MagicMock()

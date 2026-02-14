@@ -26,9 +26,9 @@ git fetch --tags
 git tag -l --format='%(refname:short) -> %(if)%(*objectname)%(then)%(*objectname:short)%(else)%(objectname:short)%(end) %(contents:subject)'
 
 # Add the tag
-RELEASE_TAG=v0.3.0                                          # match pyproject.toml version
-RELEASE_SHA=a20617e                                          # get with `git log --oneline -5`
-RELEASE_MESSAGE="v0.3.0: ckBTC wallet with IC signing"       # short description of the release
+RELEASE_TAG=v0.4.0                                          # match pyproject.toml version
+RELEASE_SHA=xxxxxxx                                          # get with `git log --oneline -5`
+RELEASE_MESSAGE="v0.4.0: mempool tracking and UX improvements" # short description of the release
 git tag -a $RELEASE_TAG $RELEASE_SHA -m "$RELEASE_MESSAGE"
 
 # Push to GitHub

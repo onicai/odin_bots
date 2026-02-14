@@ -178,7 +178,7 @@ class TestWalletInfo:
 
         result = runner.invoke(app, ["wallet", "info"])
         assert result.exit_code == 0
-        assert "Converted 5,000 sats" in result.output
+        assert "converted 5,000 sats" in result.output
         assert "Updated ckBTC balance" in result.output
 
     @patch(f"{TR}.unwrap_canister_result")
@@ -423,20 +423,29 @@ class TestWalletBalance:
 # ---------------------------------------------------------------------------
 
 class TestBackupWarning:
+    @patch(f"{TR}.unwrap_canister_result", return_value=0)
+    @patch(f"{TR}.get_withdrawal_account",
+           return_value={"owner": "minter", "subaccount": []})
+    @patch(f"{TR}.get_btc_address", return_value="bc1qtest123")
+    @patch(f"{TR}.get_pending_btc", return_value=0)
+    @patch(f"{TR}.create_ckbtc_minter")
+    @patch(f"{TR}.get_balance", return_value=25000)
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(AG)
+    @patch(CL)
     @patch(ID)
-    def test_backup_warning_shown(self, MockIdentity, odin_project):
-        """Every wallet command shows the backup warning when PEM exists."""
+    def test_backup_warning_shown(self, MockIdentity, MockClient, MockAgent,
+                                   mock_create, mock_get_bal, mock_minter,
+                                   mock_pending, mock_btc_addr,
+                                   mock_withdrawal_acct, mock_unwrap,
+                                   odin_project):
+        """wallet info shows the backup warning when PEM exists."""
         mock_id = MagicMock()
         mock_id.sender.return_value = MagicMock(
-            __str__=lambda s: "principal"
+            __str__=lambda s: "test-principal"
         )
         MockIdentity.from_pem.return_value = mock_id
         MockIdentity.return_value = MagicMock()
 
-        # Create a wallet first, then force-overwrite
-        mock_id_new = MagicMock()
-        mock_id_new.to_pem.return_value = b"pem-data"
-        MockIdentity.return_value = mock_id_new
-
-        result = runner.invoke(app, ["wallet", "create", "--force"])
+        result = runner.invoke(app, ["wallet", "info"])
         assert "IMPORTANT: Back up" in result.output

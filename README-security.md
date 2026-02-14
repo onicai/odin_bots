@@ -36,15 +36,24 @@ Windows: Use WSL2 with Ubuntu and follow the Linux instructions above.
 
 **Step 2: Build and install `blst`**
 
+Activate the Python environment where odin-bots is installed before running these commands.
+
 ```bash
-make install-blst
+BLST_VERSION=v0.3.16
+BLST_DIR=$(mktemp -d)
+git clone --branch $BLST_VERSION --depth 1 https://github.com/supranational/blst $BLST_DIR
+(cd $BLST_DIR/bindings/python && python3 run.me) || true
+cp $BLST_DIR/bindings/python/blst.py \
+    $(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")/
+cp $BLST_DIR/bindings/python/_blst*.so \
+    $(python3 -c "import sysconfig; print(sysconfig.get_paths()['platlib'])")/
+rm -rf $BLST_DIR
+python3 -c "import blst; print('blst installed successfully')"
 ```
 
-On Apple Silicon (M1/M2/M3), if you encounter ABI issues:
-```bash
-export BLST_PORTABLE=1
-make install-blst
-```
+Note: On macOS you may see a `P1_Affines_as_memory returned NULL` error during the build's self-tests. This can be safely ignored — the library is installed correctly if the final line prints `blst installed successfully`.
+
+On Apple Silicon (M1/M2/M3), if you encounter ABI issues, set `export BLST_PORTABLE=1` before running the commands above.
 
 **Step 3: Enable in odin-bots**
 
