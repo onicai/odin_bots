@@ -74,6 +74,9 @@ brew install automake libtool
 
 ```toml
 [settings]
+# See README-security.md for details
+verify_certificates = false
+cache_sessions = true
 
 [bots.bot-1]
 description = "Bot 1"
@@ -128,15 +131,6 @@ The software and hosted services are provided "as is", without warranty of any k
 ## Reference
 
 The Bitcoin rune trading platform is [Odin Fun](https://odin.fun/)
-
-## Supported Platforms
-
-| Platform | Python 3.11 | Python 3.12 | Python 3.13 |
-| --- | --- | --- | --- |
-| Ubuntu (x86-64) | yes | yes | yes |
-| macOS Apple Silicon | yes | yes | yes |
-| macOS Intel | yes | yes | yes |
-| Windows (x86-64) | yes | yes | yes |
 
 ## License
 
