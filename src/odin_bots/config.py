@@ -16,8 +16,16 @@ import tomllib
 
 IC_HOST = "https://ic0.app"
 
-# onicai ckSigner canister (prd, fiduciary subnet)
-ONICAI_CKSIGNER_CANISTER_ID = "g7qkb-iiaaa-aaaar-qb3za-cai"
+# onicai ckSigner canister IDs per PoAIW network
+CKSIGNER_CANISTER_IDS = {
+    "prd": "g7qkb-iiaaa-aaaar-qb3za-cai",
+    "testing": "ho2u6-qaaaa-aaaar-qb34q-cai",
+    "development": "ho2u6-qaaaa-aaaar-qb34q-cai",
+}
+VALID_NETWORKS = list(CKSIGNER_CANISTER_IDS.keys())
+
+# Default (prd) — kept for backward compatibility
+ONICAI_CKSIGNER_CANISTER_ID = CKSIGNER_CANISTER_IDS["prd"]
 
 # Odin.fun SIWB canister (Sign-In with Bitcoin)
 ODIN_SIWB_CANISTER_ID = "bcxqa-kqaaa-aaaak-qotba-cai"
@@ -111,6 +119,28 @@ def log(msg: str) -> None:
     """Print a message if verbose mode is enabled."""
     if _verbose:
         print(msg)
+
+
+# Module-level network (default: prd)
+_network: str = "prd"
+
+
+def set_network(network: str) -> None:
+    """Set the active PoAIW network."""
+    global _network
+    if network not in CKSIGNER_CANISTER_IDS:
+        raise ValueError(f"Unknown network '{network}'. Valid: {VALID_NETWORKS}")
+    _network = network
+
+
+def get_network() -> str:
+    """Return the active PoAIW network."""
+    return _network
+
+
+def get_cksigner_canister_id() -> str:
+    """Return the ckSigner canister ID for the active network."""
+    return CKSIGNER_CANISTER_IDS[_network]
 
 
 def _project_root() -> str:
@@ -251,16 +281,13 @@ def validate_bot_name(name: str) -> bool:
     return name in config["bots"]
 
 
-def create_default_config(bot_name: str = "bot-1") -> str:
+def create_default_config() -> str:
     """Generate default config file content.
-
-    Args:
-        bot_name: Name for the default bot.
 
     Returns:
         TOML content as string.
     """
-    return f'''# odin-bots configuration
+    return '''# odin-bots configuration
 # See: https://github.com/onicai/odin_bots
 
 [settings]
@@ -270,7 +297,7 @@ cache_sessions = true
 
 # Bot definitions
 # Each bot gets its own trading identity on Odin.Fun.
-[bots.{bot_name}]
+[bots.bot-1]
 description = "Bot 1"
 
 [bots.bot-2]

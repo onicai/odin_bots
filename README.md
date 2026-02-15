@@ -31,38 +31,36 @@ brew install automake libtool
             BTC deposits require min 10,000 sats and ~6 confirmations.
 
     Step 2. Check your wallet balance:
-            odin-bots wallet balance
+            odin-bots wallet balance [--monitor]
 
     Step 3. Fund your bots (deposits ckBTC into Odin.Fun):
-            odin-bots --bot <name> fund <amount>      # in sats
-            odin-bots --all-bots fund <amount>
+            odin-bots fund <amount> --bot <name>      # in sats
+            odin-bots fund <amount> --all-bots
 
     Step 4. Buy Runes on Odin.Fun:
-            odin-bots --bot <name> trade buy <token-id> <amount>
-            odin-bots --all-bots trade buy <token-id> <amount>
+            odin-bots trade buy <token-id> <amount> --bot <name>
+            odin-bots trade buy <token-id> <amount> --all-bots
 
     Step 5. Check your balances (wallet + bots):
-            odin-bots --all-bots balance
+            odin-bots wallet balance --all-bots [--monitor]
 
     Step 6. Sell Runes on Odin.Fun:
-            odin-bots --bot <name> trade sell <token-id> <amount>
-            odin-bots --all-bots trade sell <token-id> <amount>
+            odin-bots trade sell <token-id> <amount> --bot <name>
+            odin-bots trade sell <token-id> <amount> --all-bots
             # to sell all holdings of a token
-            odin-bots --bot <name> trade sell <token-id> all
-            odin-bots --all-bots trade sell <token-id> all
+            odin-bots trade sell <token-id> all --bot <name>
+            odin-bots trade sell <token-id> all --all-bots
             # to sell all holdings of all tokens
-            odin-bots --bot <name> trade sell all-tokens all
-            odin-bots --all-bots trade sell all-tokens all
+            odin-bots trade sell all-tokens all --bot <name>
+            odin-bots trade sell all-tokens all --all-bots
 
     Step 7. Withdraw ckBTC from Odin.Fun back to wallet:
-            odin-bots --bot <name> withdraw <amount>
-            odin-bots --all-bots withdraw <amount>
-            # to sweep all ckBTC back into the wallet
-            odin-bots --all-bots withdraw all
+            odin-bots withdraw <amount> --bot <name>
+            odin-bots withdraw all --all-bots
 
     Or use sweep to sell all tokens + withdraw in one command:
-            odin-bots --bot <name> sweep
-            odin-bots --all-bots sweep
+            odin-bots sweep --bot <name>
+            odin-bots sweep --all-bots
 
     Step 8. Send ckBTC from wallet to an external ckBTC or BTC account:
             odin-bots wallet send <amount> <address>

@@ -178,26 +178,150 @@ def balance(
     token_id: str = typer.Option("29m8", "--token", "-t", help="Token ID to check"),
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Show all bots"),
+    monitor: bool = typer.Option(
+        False, "--monitor",
+        help="Poll until all pending BTC activity completes",
+    ),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Show ckBTC and Odin token balance."""
-    from odin_bots.cli import _resolve_bot_names, state
+    from odin_bots.cli import _resolve_bot_names, _resolve_network, state
     from odin_bots.cli.balance import run_all_balances
+
+    _resolve_network(network)
 
     if bot is None and not all_bots and state.bot_name is None and not state.all_bots:
         # No bot flag specified — show wallet info only (no bot login needed)
         from odin_bots.cli.balance import run_wallet_balance
-        run_wallet_balance()
+        result = run_wallet_balance(monitor=monitor)
+
+        if not monitor:
+            print()
+            print("  Use --bot <name> or --all-bots to see bot holdings at Odin.Fun")
+            return
+
+        if result:
+            _, pending, _, active_count, address_btc = result
+            has_incoming = pending > 0 or address_btc > 0
+            has_outgoing = active_count > 0
+            if not has_incoming and not has_outgoing:
+                print()
+                print("All pending BTC activity completed.")
+                return
+            from odin_bots.config import get_btc_to_usd_rate
+            try:
+                btc_usd_rate = get_btc_to_usd_rate()
+            except Exception:
+                btc_usd_rate = None
+            print()
+            if has_incoming and has_outgoing:
+                print("Monitoring incoming BTC deposit and outgoing BTC withdrawal...")
+            elif has_incoming:
+                print("Monitoring incoming BTC deposit — completes when ckBTC minter converts (~6 confirmations)...")
+            else:
+                print("Monitoring outgoing BTC withdrawal — completes at 6 on-chain confirmations...")
+            print("Ctrl+C to stop.")
+            print()
+            _run_monitor_loop(btc_usd_rate)
     else:
         bot_names = _resolve_bot_names(bot, all_bots)
         run_all_balances(bot_names=bot_names, token_id=token_id,
                          verbose=state.verbose)
 
 
+MONITOR_INTERVAL = 30  # seconds between polls
+
+
+def _run_monitor_loop(btc_usd_rate: float | None):
+    """Poll BTC activity with phase-aware in-place line updates.
+
+    Same phase  → overwrite current line(s)
+    Phase change → advance to new line
+    """
+    import time
+
+    from odin_bots.cli.balance import _check_btc_activity
+
+    last_in_phase = None
+    last_out_phase = None
+    prev_line_count = 0
+
+    try:
+        while True:
+            sys.stdout.write("\033[2K\rChecking status...")
+            sys.stdout.flush()
+            status = _check_btc_activity(btc_usd_rate)
+            sys.stdout.write("\033[2K\r")
+            sys.stdout.flush()
+
+            in_phase = status["incoming_phase"]
+            out_phase = status["outgoing_phase"]
+
+            # Detect phase transitions
+            in_changed = in_phase != last_in_phase and last_in_phase is not None
+            out_changed = out_phase != last_out_phase and last_out_phase is not None
+
+            # Detect outgoing completion (was active, now none)
+            if (out_phase == "none"
+                    and last_out_phase not in (None, "none", "confirmed")):
+                out_phase = "confirmed"
+                status["outgoing_phase"] = "confirmed"
+                status["outgoing_text"] = "Outgoing BTC: Confirmed!"
+                out_changed = True
+
+            # Build lines for this iteration
+            lines = []
+            if in_phase != "none":
+                lines.append(status["incoming_text"])
+            if out_phase != "none":
+                lines.append(status["outgoing_text"])
+
+            any_changed = in_changed or out_changed
+
+            # Erase previous status lines (overwrite in-place)
+            if prev_line_count > 0 and not any_changed:
+                for _ in range(prev_line_count):
+                    sys.stdout.write("\033[A\033[2K")
+
+            for line in lines:
+                print(line)
+            prev_line_count = len(lines)
+
+            last_in_phase = in_phase
+            last_out_phase = out_phase
+
+            # Check completion
+            if (in_phase in ("none", "converted")
+                    and out_phase in ("none", "confirmed")):
+                print()
+                print("All pending BTC activity completed.")
+                break
+
+            # Countdown to next check
+            for remaining in range(MONITOR_INTERVAL, 0, -1):
+                sys.stdout.write(f"\033[2K\rNext check in {remaining}s...")
+                sys.stdout.flush()
+                time.sleep(1)
+            sys.stdout.write("\033[2K\r")
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        print()
+        print("Monitoring stopped.")
+
+
 @wallet_app.command()
-def info():
+def info(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
+):
     """Show wallet address and ckBTC balance."""
+    from odin_bots.cli import _resolve_network
     from odin_bots.config import get_btc_to_usd_rate
 
+    _resolve_network(network)
     _load_identity()  # Ensure wallet exists
 
     try:
@@ -211,12 +335,19 @@ def info():
 
 
 @wallet_app.command()
-def receive():
+def receive(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
+):
     """Show wallet address for funding with ckBTC or BTC."""
     from icp_agent import Agent, Client
     from icp_identity import Identity
 
+    from odin_bots.cli import _resolve_network
     from odin_bots.config import fmt_sats, get_btc_to_usd_rate
+
+    _resolve_network(network)
     from odin_bots.transfers import (
         IC_HOST,
         create_ckbtc_minter,
@@ -251,27 +382,33 @@ def receive():
     print(f"  {btc_address}")
     print("  Min deposit: 10,000 sats.")
     print("  Requires ~6 confirmations (~1 hour).")
-    print("  Run 'odin-bots --bot <name> balance' to trigger conversion.")
+    print("  Run 'odin-bots wallet balance --monitor' to track conversion.")
     print()
-    print("Option 2: Send ckBTC from any ICP wallet")
+    print("Option 2: Send ckBTC from any ckBTC wallet")
     print(f"  {wallet_principal}")
-    print("  Send from NNS, Plug, Oisy, or any ICP wallet.")
+    print("  Send from NNS, Plug, Oisy, or any ckBTC wallet.")
     print()
     print(f"Wallet balance: {fmt_sats(balance, btc_usd_rate)}")
     print()
     print("After funding, distribute to your bots:")
-    print("  odin-bots --bot bot-1 fund 5000  # fund specific bot")
-    print("  odin-bots --all-bots fund 5000   # fund all bots")
+    print("  odin-bots fund 5000 --bot bot-1  # fund specific bot")
+    print("  odin-bots fund 5000 --all-bots   # fund all bots")
 
 
 @wallet_app.command()
 def send(
     amount: str = typer.Argument(..., help="Amount in sats, or 'all' for entire balance"),
     address: str = typer.Argument(..., help="Destination: IC principal or Bitcoin address (bc1...)"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Send ckBTC to a principal or BTC to a Bitcoin address."""
     from icp_agent import Agent, Client
     from icp_identity import Identity
+
+    from odin_bots.cli import _resolve_network
+    _resolve_network(network)
 
     from odin_bots.transfers import (
         CKBTC_FEE,
@@ -509,7 +646,7 @@ def _send_btc(
             block_index = block_index.get("block_index", block_index)
         print(f"BTC withdrawal initiated! Block index: {block_index}")
         print("BTC will arrive after the transaction is confirmed on the Bitcoin network.")
-        print("Check progress with: odin-bots wallet info")
+        print("Check progress with: odin-bots wallet balance --monitor")
 
         # Save for status tracking
         if isinstance(block_index, int):

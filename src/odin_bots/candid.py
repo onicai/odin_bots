@@ -199,7 +199,8 @@ type FeeTokensRecord = record {
 };
 
 service : {
-    getPublicKey : (record { botName : text }) -> (variant { Ok : PublicKeyRecord; Err : ApiError });
+    getPublicKeyQuery : (record { botName : text }) -> (variant { Ok : PublicKeyRecord; Err : ApiError }) query;
+    getPublicKey : (record { botName : text; payment : opt Payment }) -> (variant { Ok : PublicKeyRecord; Err : ApiError });
     sign : (record { botName : text; message : blob; payment : opt Payment }) -> (variant { Ok : SignRecord; Err : ApiError });
     getFeeTokens : () -> (variant { Ok : FeeTokensRecord; Err : ApiError }) query;
 }

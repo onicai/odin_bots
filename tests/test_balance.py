@@ -279,7 +279,7 @@ class TestRunAllBalances:
         assert "No odin-bots wallet found" in output
 
     @patch("odin_bots.cli.balance._print_holdings_table")
-    @patch("odin_bots.cli.balance._print_wallet_info", return_value=(50000, 0, 0))
+    @patch("odin_bots.cli.balance._print_wallet_info", return_value=(50000, 0, 0, 0, 0))
     @patch("odin_bots.cli.balance.collect_balances")
     @patch("odin_bots.cli.balance._fetch_btc_usd_rate", return_value=100_000.0)
     def test_success(self, mock_rate, mock_collect, mock_wallet,
@@ -289,7 +289,7 @@ class TestRunAllBalances:
         mock_wallet.assert_called_once()
         mock_holdings.assert_called_once()
 
-    @patch("odin_bots.cli.balance._print_wallet_info", return_value=(50000, 0, 0))
+    @patch("odin_bots.cli.balance._print_wallet_info", return_value=(50000, 0, 0, 0, 0))
     @patch("odin_bots.cli.balance.collect_balances", side_effect=Exception("fail"))
     @patch("odin_bots.cli.balance._fetch_btc_usd_rate", return_value=100_000.0)
     def test_handles_collection_error(self, mock_rate, mock_collect,

@@ -47,11 +47,12 @@ from odin_bots.config import (
     IC_HOST,
     ODIN_API_URL,
     ODIN_SIWB_CANISTER_ID,
-    ONICAI_CKSIGNER_CANISTER_ID,
     _project_root,
     fmt_sats,
     get_btc_to_usd_rate,
     get_cache_sessions,
+    get_cksigner_canister_id,
+    get_network,
     get_pem_file,
     get_verify_certificates,
     log,
@@ -91,6 +92,115 @@ def to_hex(v):
 
 
 # ---------------------------------------------------------------------------
+# Public key retrieval (query-first with update fallback)
+# ---------------------------------------------------------------------------
+
+def _get_public_key(cksigner, bot_name: str, wallet_agent=None) -> tuple[str, str]:
+    """Get bot public key, trying query call first then update on cache miss.
+
+    The query call (getPublicKeyQuery) is free. The update call (getPublicKey)
+    may require ICRC-2 fee payment when fee tokens are configured.
+
+    Args:
+        cksigner: Canister object for the ckSigner canister.
+        bot_name: Bot name to fetch the public key for.
+        wallet_agent: Agent for the wallet identity (needed for fee payment on update).
+
+    Returns:
+        Tuple of (publicKeyHex, address).
+
+    Raises:
+        RuntimeError: If both query and update calls fail.
+    """
+    # TODO: Install blst for certificate verification in production
+    # Try query call first (free, fast, works when key is already cached)
+    result = unwrap(cksigner.getPublicKeyQuery(
+        {"botName": bot_name}, verify_certificate=get_verify_certificates(),
+    ))
+    if "Err" in result:
+        # Cache miss — fall back to update call (may require fee payment)
+        log(f"  -> Cache miss, calling getPublicKey (update) to populate cache")
+        payment = _approve_fee_if_required(cksigner, wallet_agent)
+        result = unwrap(cksigner.getPublicKey(
+            {"botName": bot_name, "payment": payment},
+            verify_certificate=get_verify_certificates(),
+        ))
+        if "Err" in result:
+            raise RuntimeError(f"getPublicKey failed: {result['Err']}")
+    return result["Ok"]["publicKeyHex"], result["Ok"]["address"]
+
+
+def _approve_fee_if_required(cksigner, wallet_agent) -> list:
+    """Check fee tokens and approve ICRC-2 payment if required.
+
+    Returns:
+        list: Payment record wrapped in list (opt Some), or empty list (opt None).
+    """
+    fee_result = unwrap(cksigner.getFeeTokens(verify_certificate=get_verify_certificates()))
+    if "Err" in fee_result:
+        raise RuntimeError(f"getFeeTokens failed: {fee_result['Err']}")
+    fee_tokens = fee_result["Ok"]["feeTokens"]
+
+    if not fee_tokens:
+        log(f"  No fees configured (free getPublicKey)")
+        return []  # opt None
+
+    ckbtc_fee_token = None
+    for ft in fee_tokens:
+        if ft["tokenName"] == "ckBTC":
+            ckbtc_fee_token = ft
+            break
+
+    if ckbtc_fee_token is None:
+        raise RuntimeError(
+            f"ckSigner requires fee payment but no ckBTC fee token configured. "
+            f"Available: {[ft['tokenName'] for ft in fee_tokens]}"
+        )
+
+    if wallet_agent is None:
+        raise RuntimeError("Fee payment required but no wallet_agent provided")
+
+    fee_amount = ckbtc_fee_token["fee"]
+    token_ledger = ckbtc_fee_token["tokenLedger"]
+
+    try:
+        _btc_usd = get_btc_to_usd_rate()
+    except Exception:
+        _btc_usd = None
+    log(f"  Fee: {fmt_sats(fee_amount, _btc_usd)} (ckBTC)")
+
+    log(f"  -> ICRC-2 approve: allowing ckSigner to collect {fmt_sats(fee_amount, _btc_usd)}...")
+    ckbtc = Canister(
+        agent=wallet_agent,
+        canister_id=CKBTC_LEDGER_CANISTER_ID,
+        candid_str=CKBTC_LEDGER_CANDID,
+    )
+    cksigner_principal = Principal.from_str(get_cksigner_canister_id())
+    approve_amount = fee_amount + CKBTC_FEE  # fee + ledger transfer fee
+
+    approve_result = unwrap_canister_result(ckbtc.icrc2_approve({
+        "spender": {"owner": cksigner_principal, "subaccount": []},
+        "amount": approve_amount,
+        "fee": [],
+        "memo": [],
+        "from_subaccount": [],
+        "created_at_time": [],
+        "expected_allowance": [],
+        "expires_at": [],
+    }, verify_certificate=get_verify_certificates()))
+
+    if isinstance(approve_result, dict) and "Err" in approve_result:
+        raise RuntimeError(f"icrc2_approve for fee payment failed: {approve_result['Err']}")
+    log(f"  Approve OK (block index: {approve_result.get('Ok', approve_result)})")
+
+    return [{
+        "tokenName": "ckBTC",
+        "tokenLedger": token_ledger,
+        "amount": fee_amount,
+    }]
+
+
+# ---------------------------------------------------------------------------
 # Session caching
 # ---------------------------------------------------------------------------
 
@@ -100,10 +210,14 @@ def _session_dir():
 
 
 def _session_path(bot_name: str) -> str:
-    """Return session file path: .cache/session_{bot_name}.json."""
+    """Return session file path: .cache/session_{bot_name}[_{network}].json."""
     # Sanitize bot name for filesystem
     safe_name = bot_name.replace("/", "_").replace("\\", "_").replace(" ", "_")
-    filename = f"session_{safe_name}.json"
+    network = get_network()
+    if network == "prd":
+        filename = f"session_{safe_name}.json"
+    else:
+        filename = f"session_{safe_name}_{network}.json"
     return os.path.join(_session_dir(), filename)
 
 
@@ -255,70 +369,8 @@ def sign_with_fee(cksigner, wallet_agent, bot_name, message):
     Raises:
         RuntimeError: If fee approval fails or no ckBTC fee token found
     """
-    # Step 1: Discover fee requirements
-    log(f"  -> Querying ckSigner fee configuration...")
-    fee_result = unwrap(cksigner.getFeeTokens(verify_certificate=get_verify_certificates()))
-    if "Err" in fee_result:
-        raise RuntimeError(f"getFeeTokens failed: {fee_result['Err']}")
-    fee_tokens = fee_result["Ok"]["feeTokens"]
+    payment = _approve_fee_if_required(cksigner, wallet_agent)
 
-    # Step 2: Approve fee payment if required
-    payment = []  # opt None — no payment
-    if fee_tokens:
-        ckbtc_fee_token = None
-        for ft in fee_tokens:
-            if ft["tokenName"] == "ckBTC":
-                ckbtc_fee_token = ft
-                break
-
-        if ckbtc_fee_token is None:
-            raise RuntimeError(
-                f"ckSigner requires fee payment but no ckBTC fee token configured. "
-                f"Available: {[ft['tokenName'] for ft in fee_tokens]}"
-            )
-
-        fee_amount = ckbtc_fee_token["fee"]
-        token_ledger = ckbtc_fee_token["tokenLedger"]
-
-        try:
-            _btc_usd = get_btc_to_usd_rate()
-        except Exception:
-            _btc_usd = None
-        log(f"  Fee: {fmt_sats(fee_amount, _btc_usd)} (ckBTC)")
-
-        log(f"  -> ICRC-2 approve: allowing ckSigner to collect {fmt_sats(fee_amount, _btc_usd)}...")
-        ckbtc = Canister(
-            agent=wallet_agent,
-            canister_id=CKBTC_LEDGER_CANISTER_ID,
-            candid_str=CKBTC_LEDGER_CANDID,
-        )
-        cksigner_principal = Principal.from_str(ONICAI_CKSIGNER_CANISTER_ID)
-        approve_amount = fee_amount + CKBTC_FEE  # fee + ledger transfer fee
-
-        approve_result = unwrap_canister_result(ckbtc.icrc2_approve({
-            "spender": {"owner": cksigner_principal, "subaccount": []},
-            "amount": approve_amount,
-            "fee": [],
-            "memo": [],
-            "from_subaccount": [],
-            "created_at_time": [],
-            "expected_allowance": [],
-            "expires_at": [],
-        }, verify_certificate=get_verify_certificates()))
-
-        if isinstance(approve_result, dict) and "Err" in approve_result:
-            raise RuntimeError(f"icrc2_approve for signing fee failed: {approve_result['Err']}")
-        log(f"  Approve OK (block index: {approve_result.get('Ok', approve_result)})")
-
-        payment = [{
-            "tokenName": "ckBTC",
-            "tokenLedger": token_ledger,
-            "amount": fee_amount,
-        }]
-    else:
-        log(f"  No fees configured (free signing)")
-
-    # Step 3: Sign with payment
     log(f"  -> Signing message via threshold Schnorr (BIP340)...")
     sign_result = unwrap(cksigner.sign({
         "botName": bot_name,
@@ -369,9 +421,9 @@ def siwb_login(bot_name: str = None, verbose: bool = True) -> dict:
     wallet_agent = Agent(wallet_identity, client)
     anon_agent = Agent(Identity(anonymous=True), client)
 
-    canister_id = ONICAI_CKSIGNER_CANISTER_ID
+    canister_id = get_cksigner_canister_id()
 
-    # Step 1: Get bot public key
+    # Step 1: Get bot public key (try fast query first, fall back to update)
     log(f"\n--- Step 1: Get bot public key (bot={bot_name}) ---")
     log(f"  -> Fetch the bot's Schnorr public key from the IC canister (derived via BIP340)")
     odin_bots = Canister(
@@ -379,12 +431,7 @@ def siwb_login(bot_name: str = None, verbose: bool = True) -> dict:
         canister_id=canister_id,
         candid_str=ONICAI_CKSIGNER_CANDID,
     )
-    # TODO: Install blst for certificate verification in production
-    result = unwrap(odin_bots.getPublicKey({"botName": bot_name}, verify_certificate=get_verify_certificates()))
-    if "Err" in result:
-        raise RuntimeError(f"getPublicKey failed: {result['Err']}")
-    pubkey_hex = result["Ok"]["publicKeyHex"]
-    address = result["Ok"]["address"]
+    pubkey_hex, address = _get_public_key(odin_bots, bot_name, wallet_agent)
     log(f"X-only pubkey: {pubkey_hex}")
 
     # Silent cross-check: canister address must match local BIP341 derivation

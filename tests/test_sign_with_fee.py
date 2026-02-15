@@ -177,7 +177,7 @@ class TestSignWithFeeErrors:
         MockCanister.return_value = mock_ckbtc
 
         from odin_bots.siwb import sign_with_fee
-        with pytest.raises(RuntimeError, match="icrc2_approve for signing fee failed"):
+        with pytest.raises(RuntimeError, match="icrc2_approve for fee payment failed"):
             sign_with_fee(mock_cksigner, MagicMock(), "bot-1", b"\x00" * 32)
 
         # sign should NOT have been called

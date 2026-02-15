@@ -9,8 +9,15 @@ from typer.testing import CliRunner
 
 from odin_bots.cli import app, state, _resolve_bot_names, _print_banner
 from odin_bots.cli.balance import BotBalances
+from odin_bots.config import get_network, set_network
 
 runner = CliRunner()
+
+# Patch at source modules since wallet.py uses local imports
+ID = "icp_identity.Identity"
+AG = "icp_agent.Agent"
+CL = "icp_agent.Client"
+TR = "odin_bots.transfers"
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +63,36 @@ class TestHelpOutput:
 # ---------------------------------------------------------------------------
 
 class TestPrintBanner:
+    def teardown_method(self):
+        set_network("prd")
+
     def test_banner_output(self, capsys, monkeypatch):
-        monkeypatch.setattr("sys.argv", ["odin-bots", "balance"])
+        monkeypatch.setattr("sys.argv", ["odin-bots", "config"])
         _print_banner()
         output = capsys.readouterr().out
         assert "$" in output
-        assert "odin-bots balance" in output
+        assert "odin-bots config" in output
+
+    def test_banner_hides_prd_network(self, capsys, monkeypatch):
+        set_network("prd")
+        monkeypatch.setattr("sys.argv", ["odin-bots", "config"])
+        _print_banner()
+        output = capsys.readouterr().out
+        assert "[network:" not in output
+
+    def test_banner_shows_testing_network(self, capsys, monkeypatch):
+        set_network("testing")
+        monkeypatch.setattr("sys.argv", ["odin-bots", "config"])
+        _print_banner()
+        output = capsys.readouterr().out
+        assert "[network: testing]" in output
+
+    def test_banner_shows_development_network(self, capsys, monkeypatch):
+        set_network("development")
+        monkeypatch.setattr("sys.argv", ["odin-bots", "config"])
+        _print_banner()
+        output = capsys.readouterr().out
+        assert "[network: development]" in output
 
 
 # ---------------------------------------------------------------------------
@@ -134,13 +165,15 @@ class TestInitCommand:
         content = (tmp_path / "odin-bots.toml").read_text()
         assert "[bots.bot-1]" in content
 
-    def test_custom_bot_name(self, tmp_path, monkeypatch):
+    def test_creates_three_default_bots(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
-        result = runner.invoke(app, ["init", "--name", "alpha"])
+        result = runner.invoke(app, ["init"])
         assert result.exit_code == 0
         content = (tmp_path / "odin-bots.toml").read_text()
-        assert "[bots.alpha]" in content
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" in content
+        assert "[bots.bot-3]" in content
 
 
 # ---------------------------------------------------------------------------
@@ -148,11 +181,41 @@ class TestInitCommand:
 # ---------------------------------------------------------------------------
 
 class TestConfigCommand:
+    def teardown_method(self):
+        set_network("prd")
+
     def test_shows_config(self, odin_project):
         result = runner.invoke(app, ["config"])
         assert result.exit_code == 0
         assert "bot-1" in result.output
         assert "bot-2" in result.output
+
+    def test_prd_hides_network(self, odin_project):
+        result = runner.invoke(app, ["config"])
+        assert result.exit_code == 0
+        assert "Network:" not in result.output
+
+    def test_prd_shows_prd_canister_id(self, odin_project):
+        result = runner.invoke(app, ["config"])
+        assert result.exit_code == 0
+        assert "g7qkb-iiaaa-aaaar-qb3za-cai" in result.output
+
+    def test_testing_shows_network(self, odin_project):
+        result = runner.invoke(app, ["--network", "testing", "config"])
+        assert result.exit_code == 0
+        assert "Network:" in result.output
+        assert "testing" in result.output
+
+    def test_testing_shows_testing_canister_id(self, odin_project):
+        result = runner.invoke(app, ["--network", "testing", "config"])
+        assert result.exit_code == 0
+        assert "ho2u6-qaaaa-aaaar-qb34q-cai" in result.output
+
+    def test_development_shows_network(self, odin_project):
+        result = runner.invoke(app, ["--network", "development", "config"])
+        assert result.exit_code == 0
+        assert "Network:" in result.output
+        assert "development" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -259,41 +322,6 @@ class TestTradeRouting:
         assert args.kwargs["action"] == "sell"
 
 
-class TestBalanceRouting:
-    @patch("odin_bots.cli.balance.run_all_balances")
-    def test_balance_requires_bot_flag(self, mock_run, odin_project):
-        result = runner.invoke(app, ["balance"])
-        assert result.exit_code == 1
-        assert "--bot" in result.output
-        mock_run.assert_not_called()
-
-    @patch("odin_bots.cli.balance.run_all_balances")
-    def test_balance_all_bots_after_command(self, mock_run, odin_project):
-        result = runner.invoke(app, ["balance", "--all-bots"])
-        mock_run.assert_called_once()
-        args = mock_run.call_args
-        assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}
-
-    @patch("odin_bots.cli.balance.run_all_balances")
-    def test_balance_all_bots_before_command(self, mock_run, odin_project):
-        result = runner.invoke(app, ["--all-bots", "balance"])
-        mock_run.assert_called_once()
-        args = mock_run.call_args
-        assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}
-
-    @patch("odin_bots.cli.balance.run_all_balances")
-    def test_balance_bot_before_command(self, mock_run, odin_project):
-        result = runner.invoke(app, ["--bot", "bot-2", "balance"])
-        args = mock_run.call_args
-        assert args.kwargs["bot_names"] == ["bot-2"]
-
-    @patch("odin_bots.cli.balance.run_all_balances")
-    def test_balance_bot_after_command(self, mock_run, odin_project):
-        result = runner.invoke(app, ["balance", "--bot", "bot-2"])
-        args = mock_run.call_args
-        assert args.kwargs["bot_names"] == ["bot-2"]
-
-
 # ---------------------------------------------------------------------------
 # Sweep command
 # ---------------------------------------------------------------------------
@@ -389,3 +417,397 @@ class TestSweepRouting:
         # Only T1 sold (T2 has zero balance)
         assert mock_trade.call_count == 1
         assert mock_trade.call_args[1]["token_id"] == "aaa"
+
+
+# ---------------------------------------------------------------------------
+# Network option
+# ---------------------------------------------------------------------------
+
+class TestNetworkOption:
+    def teardown_method(self):
+        set_network("prd")
+
+    def test_default_network_is_prd(self, odin_project):
+        result = runner.invoke(app, ["config"])
+        assert result.exit_code == 0
+        assert get_network() == "prd"
+
+    def test_network_before_command(self, odin_project):
+        result = runner.invoke(app, ["--network", "testing", "config"])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    def test_network_after_command(self, odin_project):
+        result = runner.invoke(app, ["config", "--network", "testing"])
+        assert result.exit_code == 0
+        assert "testing" in result.output
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_network_with_fund(self, mock_run_fund, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "fund", "5000",
+        ])
+        assert get_network() == "testing"
+        mock_run_fund.assert_called_once()
+
+    def test_invalid_network(self, odin_project):
+        result = runner.invoke(app, ["--network", "staging", "config"])
+        # set_network raises ValueError, Typer catches it
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Option placement flexibility (--network, --bot, --all-bots anywhere)
+# ---------------------------------------------------------------------------
+
+class TestOptionPlacement:
+    """Verify --network, --bot, and --all-bots work before and after commands."""
+
+    def teardown_method(self):
+        set_network("prd")
+
+    # --network placement with config
+
+    def test_network_before_config(self, odin_project):
+        result = runner.invoke(app, ["--network", "testing", "config"])
+        assert result.exit_code == 0
+        assert "ho2u6-qaaaa-aaaar-qb34q-cai" in result.output
+
+    def test_network_after_config(self, odin_project):
+        result = runner.invoke(app, ["config", "--network", "testing"])
+        assert result.exit_code == 0
+        assert "ho2u6-qaaaa-aaaar-qb34q-cai" in result.output
+
+    # --network placement with wallet balance
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_network_before_wallet_balance(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "wallet", "balance", "--bot", "bot-1",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_network_after_wallet_balance(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "wallet", "balance", "--bot", "bot-1", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    # --network placement with wallet info
+
+    @patch(f"{TR}.unwrap_canister_result", return_value=0)
+    @patch(f"{TR}.get_withdrawal_account",
+           return_value={"owner": "minter", "subaccount": []})
+    @patch(f"{TR}.get_btc_address", return_value="bc1qtest123")
+    @patch(f"{TR}.get_pending_btc", return_value=0)
+    @patch(f"{TR}.create_ckbtc_minter")
+    @patch(f"{TR}.get_balance", return_value=25000)
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_before_wallet_info(self, MockIdentity, MockClient,
+                                         MockAgent, mock_create, mock_get_bal,
+                                         mock_minter, mock_pending,
+                                         mock_btc_addr, mock_withdrawal_acct,
+                                         mock_unwrap, odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "test-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+
+        result = runner.invoke(app, [
+            "--network", "testing", "wallet", "info",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    @patch(f"{TR}.unwrap_canister_result", return_value=0)
+    @patch(f"{TR}.get_withdrawal_account",
+           return_value={"owner": "minter", "subaccount": []})
+    @patch(f"{TR}.get_btc_address", return_value="bc1qtest123")
+    @patch(f"{TR}.get_pending_btc", return_value=0)
+    @patch(f"{TR}.create_ckbtc_minter")
+    @patch(f"{TR}.get_balance", return_value=25000)
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_after_wallet_info(self, MockIdentity, MockClient,
+                                        MockAgent, mock_create, mock_get_bal,
+                                        mock_minter, mock_pending,
+                                        mock_btc_addr, mock_withdrawal_acct,
+                                        mock_unwrap, odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "test-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+
+        result = runner.invoke(app, [
+            "wallet", "info", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    # --network placement with wallet receive
+
+    @patch("odin_bots.cli.balance.get_btc_to_usd_rate", return_value=100_000.0)
+    @patch(f"{TR}.get_balance", return_value=10000)
+    @patch(f"{TR}.get_btc_address", return_value="bc1qtestaddr123")
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(f"{TR}.create_ckbtc_minter")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_before_wallet_receive(self, MockIdentity, MockClient,
+                                            MockAgent, mock_minter,
+                                            mock_ckbtc, mock_btc_addr,
+                                            mock_get_bal, mock_rate,
+                                            odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "test-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+
+        result = runner.invoke(app, [
+            "--network", "testing", "wallet", "receive",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    @patch("odin_bots.cli.balance.get_btc_to_usd_rate", return_value=100_000.0)
+    @patch(f"{TR}.get_balance", return_value=10000)
+    @patch(f"{TR}.get_btc_address", return_value="bc1qtestaddr123")
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(f"{TR}.create_ckbtc_minter")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_after_wallet_receive(self, MockIdentity, MockClient,
+                                           MockAgent, mock_minter,
+                                           mock_ckbtc, mock_btc_addr,
+                                           mock_get_bal, mock_rate,
+                                           odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "test-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+
+        result = runner.invoke(app, [
+            "wallet", "receive", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    # --network placement with wallet send
+
+    @patch(f"{TR}.unwrap_canister_result", side_effect=lambda x: x)
+    @patch(f"{TR}.transfer", return_value={"Ok": 42})
+    @patch(f"{TR}.get_balance")
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_before_wallet_send(self, MockIdentity, MockClient,
+                                         MockAgent, mock_create, mock_get_bal,
+                                         mock_transfer, mock_unwrap,
+                                         odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "ctrl-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+        mock_get_bal.side_effect = [5000, 3990]
+
+        result = runner.invoke(app, [
+            "--network", "testing", "wallet", "send", "1000", "dest-principal",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    @patch(f"{TR}.unwrap_canister_result", side_effect=lambda x: x)
+    @patch(f"{TR}.transfer", return_value={"Ok": 42})
+    @patch(f"{TR}.get_balance")
+    @patch(f"{TR}.create_icrc1_canister")
+    @patch(AG)
+    @patch(CL)
+    @patch(ID)
+    def test_network_after_wallet_send(self, MockIdentity, MockClient,
+                                        MockAgent, mock_create, mock_get_bal,
+                                        mock_transfer, mock_unwrap,
+                                        odin_project):
+        mock_id = MagicMock()
+        mock_id.sender.return_value = MagicMock(
+            __str__=lambda s: "ctrl-principal"
+        )
+        MockIdentity.from_pem.return_value = mock_id
+        MockIdentity.return_value = MagicMock()
+        mock_get_bal.side_effect = [5000, 3990]
+
+        result = runner.invoke(app, [
+            "wallet", "send", "1000", "dest-principal", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    # --network placement with instructions
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_network_before_instructions(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "instructions",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_network_after_instructions(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "instructions", "--bot", "bot-1", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        assert get_network() == "testing"
+
+    # --network placement with fund
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_network_before_fund(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "fund", "5000",
+        ])
+        assert result.exit_code == 0
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_network_after_fund(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--bot", "bot-1", "fund", "5000", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+
+    # --network placement with withdraw
+
+    @patch("odin_bots.cli.withdraw.run_withdraw")
+    def test_network_before_withdraw(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "withdraw", "1000",
+        ])
+        assert result.exit_code == 0
+
+    @patch("odin_bots.cli.withdraw.run_withdraw")
+    def test_network_after_withdraw(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--bot", "bot-1", "withdraw", "1000", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+
+    # --network placement with trade
+
+    @patch("odin_bots.cli.trade.run_trade")
+    def test_network_before_trade(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "trade", "buy", "29m8", "1000",
+        ])
+        assert result.exit_code == 0
+
+    @patch("odin_bots.cli.trade.run_trade")
+    def test_network_after_trade(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--bot", "bot-1", "trade", "buy", "29m8", "1000", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+
+    # --network placement with sweep
+
+    @patch("odin_bots.cli.withdraw.run_withdraw")
+    @patch("odin_bots.cli.trade.run_trade")
+    @patch("odin_bots.cli.balance.collect_balances")
+    def test_network_before_sweep(self, mock_collect, mock_trade, mock_withdraw,
+                                   odin_project):
+        mock_collect.return_value = BotBalances(
+            bot_name="bot-1", bot_principal="p1", odin_sats=0, token_holdings=[],
+        )
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-1", "sweep",
+        ])
+        assert result.exit_code == 0
+
+    @patch("odin_bots.cli.withdraw.run_withdraw")
+    @patch("odin_bots.cli.trade.run_trade")
+    @patch("odin_bots.cli.balance.collect_balances")
+    def test_network_after_sweep(self, mock_collect, mock_trade, mock_withdraw,
+                                  odin_project):
+        mock_collect.return_value = BotBalances(
+            bot_name="bot-1", bot_principal="p1", odin_sats=0, token_holdings=[],
+        )
+        result = runner.invoke(app, [
+            "--bot", "bot-1", "sweep", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+
+    # --bot placement with --network
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_bot_before_network_before_command(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--bot", "bot-2", "--network", "testing", "fund", "5000",
+        ])
+        args = mock_run.call_args
+        assert args.kwargs["bot_names"] == ["bot-2"]
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_network_before_bot_before_command(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--bot", "bot-2", "fund", "5000",
+        ])
+        args = mock_run.call_args
+        assert args.kwargs["bot_names"] == ["bot-2"]
+
+    @patch("odin_bots.cli.fund.run_fund")
+    def test_bot_after_command_network_after_command(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "fund", "5000", "--bot", "bot-2", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        args = mock_run.call_args
+        assert args.kwargs["bot_names"] == ["bot-2"]
+
+    # --all-bots placement with --network
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_all_bots_before_network_wallet_balance(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--all-bots", "wallet", "balance", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        args = mock_run.call_args
+        assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_network_before_all_bots_before_wallet_balance(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "--network", "testing", "--all-bots", "wallet", "balance",
+        ])
+        assert result.exit_code == 0
+        args = mock_run.call_args
+        assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}
+
+    @patch("odin_bots.cli.balance.run_all_balances")
+    def test_wallet_balance_all_bots_network_at_command(self, mock_run, odin_project):
+        result = runner.invoke(app, [
+            "wallet", "balance", "--all-bots", "--network", "testing",
+        ])
+        assert result.exit_code == 0
+        args = mock_run.call_args
+        assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}

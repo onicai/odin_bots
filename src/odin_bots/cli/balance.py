@@ -2,9 +2,9 @@
 odin_bots.cli.balance — Check bot balances on ckBTC ledger and odin.fun
 
 Usage:
-  odin-bots --bot <name> balance
-  odin-bots --all-bots balance
-  python -m odin_bots.cli.balance
+  odin-bots wallet balance
+  odin-bots wallet balance --bot <name>
+  odin-bots wallet balance --all-bots
 
 Uses cached JWT session if available.
 Falls back to full SIWB login if no valid session exists.
@@ -199,7 +199,8 @@ def _print_padded_table(headers, rows):
         print(fmt.format(*row))
 
 
-def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False) -> int:
+def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
+                       monitor: bool = False) -> int:
     """Print full wallet info: ckBTC balance, pending BTC, addresses, PEM path.
 
     Auto-triggers BTC→ckBTC conversion when pending deposits are detected.
@@ -352,7 +353,7 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False) -> int
 
     # Outgoing BTC (ckBTC in minter account for BTC sends)
     outgoing_line = f"  \u2022 Outgoing BTC: {fmt_sats(withdrawal_balance, btc_usd_rate)}"
-    if withdrawal_balance > 0 and not active_withdrawals:
+    if withdrawal_balance > 0:
         outgoing_line += " (fee dust — recovered on next send)"
     print(outgoing_line)
     for aw in active_withdrawals:
@@ -383,6 +384,13 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False) -> int
             except Exception:
                 pass
 
+    # Suggest --monitor when there's pending BTC activity
+    has_incoming = pending > 0 or address_btc > 0
+    has_outgoing = len(active_withdrawals) > 0
+    if (has_incoming or has_outgoing) and not monitor:
+        print()
+        print("  Use --monitor to track progress: odin-bots wallet balance --monitor")
+
     if verbose:
         # Addresses
         print()
@@ -392,7 +400,200 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False) -> int
         print()
         print(f"PEM file: {pem_path}\n")
 
-    return balance, pending, withdrawal_balance
+    return balance, pending, withdrawal_balance, len(active_withdrawals), address_btc
+
+
+def _check_btc_activity(btc_usd_rate: float | None = None) -> dict:
+    """Fetch current BTC incoming/outgoing status for monitoring.
+
+    Returns dict with:
+        incoming_phase: "none" | "mempool" | "confirming" | "converted"
+        incoming_text:  human-readable status line
+        outgoing_phase: "none" | "pending" | "submitted" | "confirmed"
+        outgoing_text:  human-readable status line
+    """
+    from odin_bots.transfers import (
+        check_btc_deposits,
+        create_ckbtc_minter,
+        get_btc_address,
+        get_pending_btc,
+        unwrap_canister_result,
+    )
+
+    pem_path = get_pem_file()
+    with open(pem_path, "r") as f:
+        pem_content = f.read()
+    identity = Identity.from_pem(pem_content)
+    principal = str(identity.sender())
+
+    client = Client(url=IC_HOST)
+    anon_agent = Agent(Identity(anonymous=True), client)
+
+    minter_anon = create_ckbtc_minter(anon_agent)
+    pending = get_pending_btc(minter_anon, principal)
+    btc_address = get_btc_address(minter_anon, principal)
+
+    # Query mempool.space for BTC on the deposit address
+    address_btc = 0
+    try:
+        addr_resp = requests.get(
+            f"https://mempool.space/api/address/{btc_address}", timeout=10
+        )
+        addr_data = addr_resp.json()
+        chain = addr_data.get("chain_stats", {})
+        mempool_stats = addr_data.get("mempool_stats", {})
+        address_btc = (
+            chain.get("funded_txo_sum", 0) - chain.get("spent_txo_sum", 0)
+            + mempool_stats.get("funded_txo_sum", 0)
+            - mempool_stats.get("spent_txo_sum", 0)
+        )
+    except Exception:
+        pass
+
+    # -- Incoming phase --
+    incoming_phase = "none"
+    incoming_text = ""
+
+    try:
+        result = check_btc_deposits(
+            create_ckbtc_minter(Agent(identity, client)), principal
+        )
+        if isinstance(result, dict) and "Ok" in result:
+            minted = result["Ok"]
+            if isinstance(minted, list):
+                total_minted = sum(u.get("amount", 0) for u in minted)
+                incoming_phase = "converted"
+                incoming_text = (
+                    f"Incoming BTC: converted {fmt_sats(total_minted, btc_usd_rate)}"
+                    " to ckBTC!"
+                )
+        elif isinstance(result, dict) and "Err" in result:
+            err = result["Err"]
+            if isinstance(err, dict) and "NoNewUtxos" in err:
+                nfo = err["NoNewUtxos"]
+                required = nfo.get("required_confirmations", "?")
+                current = nfo.get("current_confirmations")
+                incoming = address_btc if address_btc > 0 else pending
+                if current is not None and len(current) > 0:
+                    incoming_phase = "confirming"
+                    incoming_text = (
+                        f"Incoming BTC: {fmt_sats(incoming, btc_usd_rate)}"
+                        f" — waiting for confirmations ({current[0]}/{required})"
+                    )
+                elif incoming > 0:
+                    incoming_phase = "confirming"
+                    incoming_text = (
+                        f"Incoming BTC: {fmt_sats(incoming, btc_usd_rate)}"
+                        " — waiting for confirmations"
+                    )
+    except Exception:
+        if pending > 0 or address_btc > 0:
+            incoming = address_btc if address_btc > 0 else pending
+            incoming_phase = "mempool"
+            incoming_text = (
+                f"Incoming BTC: {fmt_sats(incoming, btc_usd_rate)} — pending"
+            )
+
+    # Unconfirmed in mempool but minter doesn't see it yet
+    if incoming_phase == "none" and address_btc > 0:
+        incoming_phase = "mempool"
+        incoming_text = (
+            f"Incoming BTC: {fmt_sats(address_btc, btc_usd_rate)}"
+            " — unconfirmed in mempool"
+        )
+
+    # -- Outgoing phase --
+    from odin_bots.cli.wallet import load_withdrawal_statuses, remove_withdrawal
+
+    withdrawals = load_withdrawal_statuses()
+    outgoing_phase = "none"
+    outgoing_text = ""
+    active_withdrawals = []
+
+    for ws in withdrawals:
+        try:
+            auth_agent_status = Agent(identity, client)
+            minter_status = create_ckbtc_minter(auth_agent_status)
+            status_result = unwrap_canister_result(
+                minter_status.retrieve_btc_status_v2(
+                    {"block_index": ws["block_index"]},
+                    verify_certificate=get_verify_certificates(),
+                )
+            )
+            if isinstance(status_result, dict):
+                status_key = next(iter(status_result))
+                status_val = status_result[status_key]
+                txid_hex = None
+                if isinstance(status_val, dict) and "txid" in status_val:
+                    txid_hex = status_val["txid"][::-1].hex()
+                if status_key == "Confirmed":
+                    remove_withdrawal(ws["block_index"])
+                else:
+                    active_withdrawals.append({
+                        **ws, "status": status_key, "txid": txid_hex,
+                    })
+        except Exception:
+            pass
+
+    if active_withdrawals:
+        aw = active_withdrawals[0]
+        amt = aw.get("amount", 0)
+        addr = aw.get("btc_address", "?")
+
+        if aw["status"] == "Pending":
+            outgoing_phase = "pending"
+            outgoing_text = (
+                f"Outgoing BTC: Pending"
+                f" — {fmt_sats(amt, btc_usd_rate)} to {addr}"
+            )
+        elif aw["status"] == "Submitted":
+            outgoing_phase = "submitted"
+            confs_str = ""
+            confs = 0
+            txid = aw.get("txid")
+            if txid:
+                try:
+                    tx_resp = requests.get(
+                        f"https://mempool.space/api/tx/{txid}", timeout=10
+                    )
+                    tx_data = tx_resp.json().get("status", {})
+                    if tx_data.get("confirmed"):
+                        tip_resp = requests.get(
+                            "https://mempool.space/api/blocks/tip/height",
+                            timeout=10,
+                        )
+                        tip_height = tip_resp.json()
+                        confs = tip_height - tx_data["block_height"] + 1
+                        confs_str = f" ({confs} confirmations)"
+                    else:
+                        confs_str = " (unconfirmed)"
+                except Exception:
+                    pass
+            # Minter may lag behind on-chain state; treat as confirmed
+            # once the Bitcoin transaction has >= 6 confirmations.
+            if confs >= 6:
+                outgoing_phase = "confirmed"
+                outgoing_text = (
+                    f"Outgoing BTC: Confirmed"
+                    f" — {fmt_sats(amt, btc_usd_rate)} to {addr}"
+                    f" ({confs} confirmations)"
+                )
+                remove_withdrawal(aw["block_index"])
+            else:
+                outgoing_text = (
+                    f"Outgoing BTC: Submitted"
+                    f" — {fmt_sats(amt, btc_usd_rate)} to {addr}{confs_str}"
+                )
+    elif withdrawals and not active_withdrawals:
+        outgoing_phase = "confirmed"
+        outgoing_text = "Outgoing BTC: Confirmed!"
+
+    return {
+        "incoming_phase": incoming_phase,
+        "incoming_text": incoming_text,
+        "outgoing_phase": outgoing_phase,
+        "outgoing_text": outgoing_text,
+    }
 
 
 def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
@@ -484,12 +685,15 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
 # Entry points
 # ---------------------------------------------------------------------------
 
-def run_wallet_balance():
-    """Show wallet info only (no bot login required)."""
+def run_wallet_balance(monitor: bool = False):
+    """Show wallet info only (no bot login required).
+
+    Returns the 5-tuple from _print_wallet_info(), or None if wallet missing.
+    """
     if not require_wallet():
-        return
+        return None
     btc_usd_rate = _fetch_btc_usd_rate()
-    _print_wallet_info(btc_usd_rate)
+    return _print_wallet_info(btc_usd_rate, monitor=monitor)
 
 
 def run_all_balances(bot_names: list, token_id: str = "29m8",
@@ -504,7 +708,7 @@ def run_all_balances(bot_names: list, token_id: str = "29m8",
     if not require_wallet():
         return
     btc_usd_rate = _fetch_btc_usd_rate()
-    wallet_balance, wallet_pending, wallet_withdrawal = _print_wallet_info(btc_usd_rate)
+    wallet_balance, wallet_pending, wallet_withdrawal, _, _ = _print_wallet_info(btc_usd_rate)
 
     print()
     print("=" * 60)

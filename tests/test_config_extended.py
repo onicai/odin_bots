@@ -120,18 +120,14 @@ class TestValidateBotName:
 
 class TestCreateDefaultConfig:
     def test_generates_toml(self):
-        content = create_default_config("my-bot")
-        assert "[bots.my-bot]" in content
+        content = create_default_config()
+        assert "[bots.bot-1]" in content
         assert "[bots.bot-2]" in content
         assert "[bots.bot-3]" in content
 
     def test_includes_verify_certificates(self):
-        content = create_default_config("bot-1")
+        content = create_default_config()
         assert "verify_certificates = false" in content
-
-    def test_custom_bot_name(self):
-        content = create_default_config("alpha")
-        assert "[bots.alpha]" in content
 
 
 class TestGetVerifyCertificates:
@@ -230,5 +226,5 @@ class TestGetCacheSessions:
 
     def test_included_in_default_config(self):
         """Default config template includes cache_sessions = true."""
-        content = create_default_config("bot-1")
+        content = create_default_config()
         assert "cache_sessions = true" in content

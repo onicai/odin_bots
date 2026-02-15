@@ -10,12 +10,14 @@ import typer
 
 from odin_bots.config import (
     CONFIG_FILENAME,
-    ONICAI_CKSIGNER_CANISTER_ID,
     PEM_FILE,
     create_default_config,
     find_config,
     get_bot_names,
+    get_cksigner_canister_id,
+    get_network,
     load_config,
+    set_network,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,36 +46,36 @@ How to use your bots:
           BTC deposits require min 10,000 sats and ~6 confirmations.
 \b
   Step 2. Check your wallet balance:
-          odin-bots wallet balance
+          odin-bots wallet balance [--monitor]
 \b
   Step 3. Fund your bots (deposits ckBTC into Odin.Fun):
-          odin-bots --bot <name> fund <amount>          # in sats
-          odin-bots --all-bots fund <amount>
+          odin-bots fund <amount> --bot <name>          # in sats
+          odin-bots fund <amount> --all-bots
 \b
   Step 4. Buy Runes on Odin.Fun:
-          odin-bots --bot <name> trade buy <token-id> <amount>   # in sats
-          odin-bots --all-bots trade buy <token-id> <amount>
+          odin-bots trade buy <token-id> <amount> --bot <name>   # in sats
+          odin-bots trade buy <token-id> <amount> --all-bots
 \b
   Step 5. Check your balances (wallet + bots):
-          odin-bots --all-bots balance
+          odin-bots wallet balance --all-bots [--monitor]
 \b
   Step 6. Sell Runes on Odin.Fun:
-          odin-bots --bot <name> trade sell <token-id> <amount>
-          odin-bots --all-bots trade sell <token-id> <amount>
+          odin-bots trade sell <token-id> <amount> --bot <name>
+          odin-bots trade sell <token-id> <amount> --all-bots
           # to sell all holdings of a token
-          odin-bots --bot <name> trade sell <token-id> all
-          odin-bots --all-bots trade sell <token-id> all
+          odin-bots trade sell <token-id> all --bot <name>
+          odin-bots trade sell <token-id> all --all-bots
           # to sell all holdings of all tokens
-          odin-bots --bot <name> trade sell all-tokens all
-          odin-bots --all-bots trade sell all-tokens all
+          odin-bots trade sell all-tokens all --bot <name>
+          odin-bots trade sell all-tokens all --all-bots
 \b
   Step 7. Withdraw ckBTC from Odin.Fun back to wallet:
-          odin-bots --bot <name> withdraw <amount>      # in sats
-          odin-bots --all-bots withdraw all
+          odin-bots withdraw <amount> --bot <name>      # in sats
+          odin-bots withdraw all --all-bots
 \b
   Or use sweep to sell all tokens + withdraw in one command:
-          odin-bots --bot <name> sweep
-          odin-bots --all-bots sweep
+          odin-bots sweep --bot <name>
+          odin-bots sweep --all-bots
 \b
   Step 8. Send ckBTC from wallet to an external ckBTC or BTC account:
           odin-bots wallet send <amount> <address>      # in sats
@@ -93,36 +95,36 @@ All ckBTC amounts are in sats (1 BTC = 100,000,000 sats).
           BTC deposits require min 10,000 sats and ~6 confirmations.
 
   Step 2. Check your wallet balance:
-          odin-bots wallet balance
+          odin-bots wallet balance [--monitor]
 
   Step 3. Fund your bots (deposits ckBTC into Odin.Fun):
-          odin-bots --bot <bot-name> fund <amount>          # in sats
-          odin-bots --all-bots fund <amount>
+          odin-bots fund <amount> --bot <bot-name>          # in sats
+          odin-bots fund <amount> --all-bots
 
   Step 4. Buy Runes on Odin.Fun:
-          odin-bots --bot <bot-name> trade buy <token-id> <amount>   # in sats
-          odin-bots --all-bots trade buy <token-id> <amount>
+          odin-bots trade buy <token-id> <amount> --bot <bot-name>   # in sats
+          odin-bots trade buy <token-id> <amount> --all-bots
 
   Step 5. Check your balances (wallet + bots):
-          odin-bots --all-bots balance
+          odin-bots wallet balance --all-bots [--monitor]
 
   Step 6. Sell Runes on Odin.Fun:
-          odin-bots --bot <bot-name> trade sell <token-id> <amount>
-          odin-bots --all-bots trade sell <token-id> <amount>
+          odin-bots trade sell <token-id> <amount> --bot <bot-name>
+          odin-bots trade sell <token-id> <amount> --all-bots
           # to sell all holdings of a token
-          odin-bots --bot <bot-name> trade sell <token-id> all
-          odin-bots --all-bots trade sell <token-id> all
+          odin-bots trade sell <token-id> all --bot <bot-name>
+          odin-bots trade sell <token-id> all --all-bots
           # to sell all holdings of all tokens
-          odin-bots --bot <bot-name> trade sell all-tokens all
-          odin-bots --all-bots trade sell all-tokens all
+          odin-bots trade sell all-tokens all --bot <bot-name>
+          odin-bots trade sell all-tokens all --all-bots
 
   Step 7. Withdraw ckBTC from Odin.Fun back to wallet:
-          odin-bots --bot <bot-name> withdraw <amount>      # in sats
-          odin-bots --all-bots withdraw all
+          odin-bots withdraw <amount> --bot <bot-name>      # in sats
+          odin-bots withdraw all --all-bots
 
   Or use sweep to sell all tokens + withdraw in one command:
-          odin-bots --bot <bot-name> sweep
-          odin-bots --all-bots sweep
+          odin-bots sweep --bot <bot-name>
+          odin-bots sweep --all-bots
 
   Step 8. Send ckBTC from wallet to an external ckBTC or BTC account:
           odin-bots wallet send <amount> <address>          # in sats
@@ -141,6 +143,7 @@ class State:
     bot_name: Optional[str] = None  # None = not specified
     all_bots: bool = False
     verbose: bool = False
+    network: str = "prd"
 
 
 state = State()
@@ -152,8 +155,8 @@ def _resolve_bot_names(
     """Return list of bot names from --bot or --all-bots flags.
 
     Merges per-command flags with global state so both placements work:
-      odin-bots --all-bots balance
-      odin-bots balance --all-bots
+      odin-bots --all-bots fund 1000
+      odin-bots fund 1000 --all-bots
 
     Exits with an error if neither --bot nor --all-bots is provided.
     """
@@ -168,9 +171,23 @@ def _resolve_bot_names(
     raise typer.Exit(1)
 
 
+def _resolve_network(network: Optional[str] = None) -> None:
+    """Apply per-command --network, merging with global state.
+
+    Allows --network to be placed before or after the subcommand:
+      odin-bots --network testing fund 1000 --bot bot-1
+      odin-bots fund 1000 --bot bot-1 --network testing
+    """
+    effective = network or state.network
+    set_network(effective)
+
+
 def _print_banner():
     """Print a command banner for visual separation."""
     cmd = "odin-bots " + " ".join(sys.argv[1:]) if sys.argv[1:] else "odin-bots"
+    network = get_network()
+    if network != "prd":
+        cmd += f"  [network: {network}]"
     inner = f" {cmd} "
     width = max(len(inner) + 2, 55)
     border = "$" * width
@@ -206,11 +223,16 @@ def main_callback(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show verbose output"
     ),
+    network: str = typer.Option(
+        "prd", "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Global options for all commands."""
     state.bot_name = bot  # None when --bot not passed
     state.all_bots = all_bots
     state.verbose = verbose
+    state.network = network
+    set_network(network)
     if ctx.invoked_subcommand is not None:
         _print_banner()
 
@@ -238,9 +260,6 @@ GITIGNORE_CONTENT = """\
 
 @app.command()
 def init(
-    bot_name: str = typer.Option(
-        "bot-1", "--name", "-n", help="Name for the default bot"
-    ),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
 ):
     """Initialize a new odin-bots project."""
@@ -257,9 +276,9 @@ def init(
         print("Created .gitignore")
 
     # Write config
-    config_content = create_default_config(bot_name)
+    config_content = create_default_config()
     config_path.write_text(config_content)
-    print(f"Created {CONFIG_FILENAME} with bot '{bot_name}'")
+    print(f"Created {CONFIG_FILENAME} with bots: bot-1, bot-2, bot-3")
 
     print()
     print("Next steps:")
@@ -268,17 +287,25 @@ def init(
     print("  2. Fund your wallet:")
     print("     odin-bots wallet receive")
     print("  3. Check your balance:")
-    print("     odin-bots --bot bot-1 balance")
+    print("     odin-bots wallet balance")
 
 
 @app.command()
-def config():
+def config(
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
+):
     """Show current configuration."""
+    _resolve_network(network)
     cfg = load_config()
     config_path = find_config()
 
+    network = get_network()
     print(f"Config file:   {config_path or 'using defaults'}")
-    print(f"Canister ID:   {ONICAI_CKSIGNER_CANISTER_ID}")
+    if network != "prd":
+        print(f"Network:       {network}")
+    print(f"ckSigner ID:   {get_cksigner_canister_id()}")
     print(f"PEM file:      {PEM_FILE}")
     print()
     print("Bots:")
@@ -288,25 +315,15 @@ def config():
 
 
 @app.command()
-def balance(
-    token_id: str = typer.Option("29m8", "--token", "-t", help="Token ID to check"),
-    bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
-    all_bots: bool = typer.Option(False, "--all-bots", help="Show all bots"),
-):
-    """Show ckBTC and Odin token balance."""
-    from odin_bots.cli.balance import run_all_balances
-
-    bot_names = _resolve_bot_names(bot, all_bots)
-    run_all_balances(bot_names=bot_names, token_id=token_id,
-                     verbose=state.verbose)
-
-
-@app.command()
 def instructions(
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Show all bots"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Show balance and usage instructions."""
+    _resolve_network(network)
     _show_balance_and_instructions(bot, all_bots)
 
 
@@ -315,8 +332,12 @@ def fund(
     amount: int = typer.Argument(..., help="Amount in sats to send to each bot"),
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Fund all bots"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Fund bot(s) and deposit into Odin.Fun trading accounts."""
+    _resolve_network(network)
     from odin_bots.cli.fund import run_fund
 
     bot_names = _resolve_bot_names(bot, all_bots)
@@ -330,8 +351,12 @@ def withdraw(
     ),
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Withdraw from all bots"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Withdraw from Odin.Fun back to the odin-bots wallet."""
+    _resolve_network(network)
     from odin_bots.cli.withdraw import run_withdraw
 
     bot_names = _resolve_bot_names(bot, all_bots)
@@ -348,8 +373,12 @@ def trade(
     ),
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Trade with all bots"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Buy or sell tokens on Odin.Fun."""
+    _resolve_network(network)
     from odin_bots.cli.trade import run_trade
 
     bot_names = _resolve_bot_names(bot, all_bots)
@@ -383,8 +412,12 @@ def trade(
 def sweep(
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Sweep all bots"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
 ):
     """Sell all tokens and withdraw all ckBTC back to the wallet."""
+    _resolve_network(network)
     from odin_bots.cli.balance import collect_balances
     from odin_bots.cli.trade import run_trade
     from odin_bots.cli.withdraw import run_withdraw
