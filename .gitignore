@@ -11,7 +11,7 @@ motoko_oc_bot_sdk/
 secret/
 .wallet/
 .cache/
-e2e-bots/
+e2e-bots-*/
 
 # Various IDEs and Editors
 .vscode/

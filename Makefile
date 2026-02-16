@@ -28,12 +28,12 @@ help:
 	@echo "  make e2e-trade-all-bots      Step 3b: fund all bots, buy, sell"
 	@echo "  make e2e-wallet-balance-all-bots  wallet balance --all-bots"
 	@echo "  make e2e-withdraw-bot-1      Step 4: withdraw from bot-1 back to wallet"
-	@echo "  make e2e-sweep               Step 5: fund, buy, then sweep (sell all + withdraw all)"
+	@echo "  make e2e-sweep               Step 5: sweep all bots (sell all tokens + withdraw all)"
 	@echo "  make e2e-send-ckbtc        Step 6a: send ckBTC back to return principal"
 	@echo "  make e2e-send-check-ckbtc  verify ckBTC send completed"
 	@echo "  make e2e-send-btc          Step 6b: send ckBTC as BTC to return address"
 	@echo "  make e2e-send-check-btc    verify BTC send completed"
-	@echo "  make e2e-clean               Remove e2e-bots/ directory"
+	@echo "  make e2e-clean               Remove e2e-bots-<network>/ directory"
 	@echo ""
 
 # ---------------------------------------------------------------------------
@@ -121,11 +121,11 @@ lint:
 #      make e2e-send-check-ckbtc
 #      make e2e-send-btc            — send ckBTC as BTC to bc1 address
 #      make e2e-send-check-btc
-#   8. make e2e-clean               — remove e2e-bots/
+#   8. make e2e-clean               — remove e2e-bots-<network>/
 # ---------------------------------------------------------------------------
 
-E2E_DIR             := e2e-bots
-E2E_NETWORK         := testing
+E2E_NETWORK         ?= testing
+E2E_DIR             := e2e-bots-$(E2E_NETWORK)
 E2E_BOT             := bot-1
 E2E_TOKEN           := 29m8
 E2E_FUND_WALLET_AMT := 20000
@@ -185,10 +185,6 @@ e2e-fund-check-ckbtc:
 	@echo " E2E Fund Check: ckBTC"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- wallet balance ---"
-	$(ODIN) wallet balance
-	@echo ""
-	@echo "--- wallet balance ---"
 	$(ODIN) wallet balance
 	@echo ""
 	@echo "==========================================="
@@ -218,28 +214,19 @@ e2e-trade-bot-1:
 	@echo " Trade amount:    $(E2E_TRADE_AMT) sats"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- 1/8: config ---"
+	@echo "--- 1/5: config ---"
 	$(ODIN) config
 	@echo ""
-	@echo "--- 2/8: instructions ---"
-	$(ODIN) instructions --bot $(E2E_BOT)
-	@echo ""
-	@echo "--- 3/8: fund bot ($(E2E_FUND_BOTS_AMT) sats) ---"
+	@echo "--- 2/5: fund bot ($(E2E_FUND_BOTS_AMT) sats) ---"
 	$(ODIN) fund $(E2E_FUND_BOTS_AMT) --bot $(E2E_BOT)
 	@echo ""
-	@echo "--- 4/8: balance after fund ---"
-	$(ODIN) wallet balance --bot $(E2E_BOT) --token $(E2E_TOKEN)
-	@echo ""
-	@echo "--- 5/8: trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) sats ---"
+	@echo "--- 3/5: trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) sats ---"
 	$(ODIN) trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) --bot $(E2E_BOT)
 	@echo ""
-	@echo "--- 6/8: balance after buy ---"
-	$(ODIN) wallet balance --bot $(E2E_BOT) --token $(E2E_TOKEN)
-	@echo ""
-	@echo "--- 7/8: trade sell $(E2E_TOKEN) all ---"
+	@echo "--- 4/5: trade sell $(E2E_TOKEN) all ---"
 	$(ODIN) trade sell $(E2E_TOKEN) all --bot $(E2E_BOT)
 	@echo ""
-	@echo "--- 8/8: balance after sell ---"
+	@echo "--- 5/5: balance ---"
 	$(ODIN) wallet balance --bot $(E2E_BOT) --token $(E2E_TOKEN)
 	@echo ""
 	@echo "==========================================="
@@ -263,28 +250,19 @@ e2e-trade-all-bots:
 	@echo " Trade amount:    $(E2E_TRADE_AMT) sats (per bot)"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- 1/8: config ---"
+	@echo "--- 1/5: config ---"
 	$(ODIN) config
 	@echo ""
-	@echo "--- 2/8: instructions ---"
-	$(ODIN) instructions --all-bots
-	@echo ""
-	@echo "--- 3/8: fund all bots ($(E2E_FUND_BOTS_AMT) sats each) ---"
+	@echo "--- 2/5: fund all bots ($(E2E_FUND_BOTS_AMT) sats each) ---"
 	$(ODIN) fund $(E2E_FUND_BOTS_AMT) --all-bots
 	@echo ""
-	@echo "--- 4/8: balance after fund ---"
-	$(ODIN) wallet balance --all-bots
-	@echo ""
-	@echo "--- 5/8: trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) sats ---"
+	@echo "--- 3/5: trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) sats ---"
 	$(ODIN) trade buy $(E2E_TOKEN) $(E2E_TRADE_AMT) --all-bots
 	@echo ""
-	@echo "--- 6/8: balance after buy ---"
-	$(ODIN) wallet balance --all-bots
-	@echo ""
-	@echo "--- 7/8: trade sell $(E2E_TOKEN) all ---"
+	@echo "--- 4/5: trade sell $(E2E_TOKEN) all ---"
 	$(ODIN) trade sell $(E2E_TOKEN) all --all-bots
 	@echo ""
-	@echo "--- 8/8: balance after sell ---"
+	@echo "--- 5/5: balance ---"
 	$(ODIN) wallet balance --all-bots
 	@echo ""
 	@echo "==========================================="
@@ -313,11 +291,7 @@ e2e-withdraw-bot-1:
 	@echo " E2E Withdraw: bot-1 → wallet"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- withdraw all from bot-1 ---"
 	$(ODIN) withdraw all --bot bot-1
-	@echo ""
-	@echo "--- wallet balance ---"
-	$(ODIN) wallet balance
 	@echo ""
 	@echo "==========================================="
 	@echo " E2E Withdraw bot-1: COMPLETE"
@@ -332,20 +306,10 @@ e2e-withdraw-bot-1:
 e2e-sweep:
 	@test -d $(E2E_DIR) || (echo "ERROR: Run 'make e2e-setup' first"; exit 1)
 	@echo "==========================================="
-	@echo " E2E Sweep: fund, buy, then sweep"
+	@echo " E2E Sweep: sell all tokens + withdraw all (all bots)"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- 1/3: fund bot ($(E2E_FUND_BOTS_AMT) sats) ---"
-	$(ODIN) fund $(E2E_FUND_BOTS_AMT) --bot $(E2E_BOT)
-	@echo ""
-	@echo "--- 2/3: trade buy $(E2E_TOKEN) 500 sats ---"
-	$(ODIN) trade buy $(E2E_TOKEN) 500 --bot $(E2E_BOT)
-	@echo ""
-	@echo "--- 3/3: sweep (sell all + withdraw all) ---"
-	$(ODIN) sweep --bot $(E2E_BOT)
-	@echo ""
-	@echo "--- wallet balance ---"
-	$(ODIN) wallet balance
+	$(ODIN) sweep --all-bots
 	@echo ""
 	@echo "==========================================="
 	@echo " E2E Sweep: COMPLETE"
@@ -364,14 +328,7 @@ e2e-send-ckbtc:
 	@echo " E2E Send: ckBTC → $(RETURN_ADDR)  (amount: $(AMT))"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- wallet balance before ---"
-	$(ODIN) wallet balance
-	@echo ""
-	@echo "--- wallet send $(AMT) $(RETURN_ADDR) ---"
 	$(ODIN) wallet send $(AMT) $(RETURN_ADDR)
-	@echo ""
-	@echo "--- wallet balance after ---"
-	$(ODIN) wallet balance
 	@echo ""
 	@echo "==========================================="
 	@echo " ckBTC send initiated."
@@ -399,14 +356,7 @@ e2e-send-btc:
 	@echo " E2E Send: BTC → $(RETURN_ADDR)  (amount: $(AMT))"
 	@echo "==========================================="
 	@echo ""
-	@echo "--- wallet balance before ---"
-	$(ODIN) wallet balance
-	@echo ""
-	@echo "--- wallet send $(AMT) $(RETURN_ADDR) ---"
 	$(ODIN) wallet send $(AMT) $(RETURN_ADDR)
-	@echo ""
-	@echo "--- wallet balance after ---"
-	$(ODIN) wallet balance
 	@echo ""
 	@echo "==========================================="
 	@echo " BTC send initiated via ckBTC minter."

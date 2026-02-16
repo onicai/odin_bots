@@ -24,23 +24,8 @@ _show_backup_warning = False
 
 WALLET_DIR = ".wallet"
 
-PEM_BACKUP_WARNING = """\
-
-IMPORTANT: Back up .wallet/identity-private.pem securely!
-  - If lost, you lose access to your wallet and all funds in it.
-  - If leaked, anyone can control your wallet.
-  - Treat it like an SSH private key or a Bitcoin seed phrase."""
-
 CERT_VERIFY_WARNING = """
 WARNING: IC certificate verification is disabled. See README-security.md for details."""
-
-
-def _print_backup_warning():
-    """Print PEM backup warning after every wallet command."""
-    if _pem_path().exists():
-        print(PEM_BACKUP_WARNING)
-    if not get_verify_certificates():
-        print(CERT_VERIFY_WARNING)
 
 
 def _wallet_dir() -> Path:
@@ -178,6 +163,10 @@ def balance(
     token_id: str = typer.Option("29m8", "--token", "-t", help="Token ID to check"),
     bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
     all_bots: bool = typer.Option(False, "--all-bots", help="Show all bots"),
+    ckbtc_minter: bool = typer.Option(
+        False, "--ckbtc-minter",
+        help="Show ckBTC minter status (incoming/outgoing BTC)",
+    ),
     monitor: bool = typer.Option(
         False, "--monitor",
         help="Poll until all pending BTC activity completes",
@@ -192,14 +181,20 @@ def balance(
 
     _resolve_network(network)
 
+    # --monitor implies --ckbtc-minter
+    if monitor:
+        ckbtc_minter = True
+
     if bot is None and not all_bots and state.bot_name is None and not state.all_bots:
         # No bot flag specified — show wallet info only (no bot login needed)
         from odin_bots.cli.balance import run_wallet_balance
-        result = run_wallet_balance(monitor=monitor)
+        result = run_wallet_balance(monitor=monitor, ckbtc_minter=ckbtc_minter)
 
         if not monitor:
             print()
-            print("  Use --bot <name> or --all-bots to see bot holdings at Odin.Fun")
+            print("Notes:")
+            print(" - Use --ckbtc-minter to see the minting status of incoming and outgoing BTC.")
+            print(" - Use --bot <name> or --all-bots to see bot holdings at Odin.Fun")
             return
 
         if result:
@@ -228,7 +223,7 @@ def balance(
     else:
         bot_names = _resolve_bot_names(bot, all_bots)
         run_all_balances(bot_names=bot_names, token_id=token_id,
-                         verbose=state.verbose)
+                         verbose=state.verbose, ckbtc_minter=ckbtc_minter)
 
 
 MONITOR_INTERVAL = 30  # seconds between polls
@@ -313,13 +308,17 @@ def _run_monitor_loop(btc_usd_rate: float | None):
 
 @wallet_app.command()
 def info(
+    ckbtc_minter: bool = typer.Option(
+        False, "--ckbtc-minter",
+        help="Show ckBTC minter status (incoming/outgoing BTC)",
+    ),
     network: Optional[str] = typer.Option(
         None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
     ),
 ):
     """Show wallet address and ckBTC balance."""
     from odin_bots.cli import _resolve_network
-    from odin_bots.config import get_btc_to_usd_rate
+    from odin_bots.config import get_btc_to_usd_rate, get_pem_file
 
     _resolve_network(network)
     _load_identity()  # Ensure wallet exists
@@ -330,8 +329,19 @@ def info(
         btc_usd_rate = None
 
     from odin_bots.cli.balance import _print_wallet_info
-    _print_wallet_info(btc_usd_rate, verbose=True)
-    _print_backup_warning()
+    _print_wallet_info(btc_usd_rate, ckbtc_minter=ckbtc_minter)
+
+    pem_path = get_pem_file()
+    print()
+    print("Notes:")
+    print(" - Use --ckbtc-minter to see the minting status of incoming and outgoing BTC.")
+    print(f" - Wallet PEM file: {pem_path}")
+    print("   -> Back up .wallet/identity-private.pem securely!")
+    print("   -> If lost, you lose access to your wallet and all funds in it.")
+    print("   -> If leaked, anyone can control your wallet.")
+    print("   -> Treat it like an SSH private key or a Bitcoin seed phrase.")
+    if not get_verify_certificates():
+        print(CERT_VERIFY_WARNING)
 
 
 @wallet_app.command()

@@ -141,6 +141,35 @@ class TestPrintHoldingsTable:
 # ---------------------------------------------------------------------------
 
 class TestPrintWalletInfo:
+    @patch("odin_bots.transfers.get_btc_address", return_value="bc1qtest456")
+    @patch("odin_bots.transfers.create_ckbtc_minter")
+    @patch("odin_bots.transfers.get_balance", return_value=50000)
+    @patch("odin_bots.transfers.create_icrc1_canister")
+    @patch("odin_bots.cli.balance.Agent")
+    @patch("odin_bots.cli.balance.Client")
+    @patch("odin_bots.cli.balance.Identity")
+    def test_prints_core_info(self, MockId, MockClient, MockAgent,
+                               mock_create, mock_get_bal, mock_minter,
+                               mock_btc_addr,
+                               odin_project, capsys):
+        mock_identity = MagicMock()
+        mock_identity.sender.return_value = MagicMock(
+            __str__=lambda s: "ctrl-principal"
+        )
+        MockId.from_pem.return_value = mock_identity
+
+        _print_wallet_info(100_000.0)
+        output = capsys.readouterr().out
+        assert "ICRC-1 ckBTC:" in output
+        assert "50,000 sats" in output
+        assert "To fund your wallet:" in output
+        assert "ctrl-principal" in output
+        assert "bc1qtest456" in output
+        # No minter section by default
+        assert "ckBTC minter:" not in output
+        # PEM file not shown by _print_wallet_info (wallet info command handles it)
+        assert "PEM file:" not in output
+
     @patch("odin_bots.transfers.unwrap_canister_result", return_value=0)
     @patch("odin_bots.transfers.get_withdrawal_account",
            return_value={"owner": "minter", "subaccount": []})
@@ -152,7 +181,7 @@ class TestPrintWalletInfo:
     @patch("odin_bots.cli.balance.Agent")
     @patch("odin_bots.cli.balance.Client")
     @patch("odin_bots.cli.balance.Identity")
-    def test_prints_full_info(self, MockId, MockClient, MockAgent,
+    def test_ckbtc_minter_shows_minter_section(self, MockId, MockClient, MockAgent,
                                mock_create, mock_get_bal, mock_minter,
                                mock_pending, mock_btc_addr,
                                mock_withdrawal_acct, mock_unwrap,
@@ -163,13 +192,9 @@ class TestPrintWalletInfo:
         )
         MockId.from_pem.return_value = mock_identity
 
-        _print_wallet_info(100_000.0, verbose=True)
+        _print_wallet_info(100_000.0, ckbtc_minter=True)
         output = capsys.readouterr().out
         assert "ICRC-1 ckBTC:" in output
-        assert "50,000 sats" in output
-        assert "Wallet principal:" in output
-        assert "bc1qtest456" in output
-        assert "PEM file:" in output
         assert "ckBTC minter:" in output
         assert "Incoming BTC:" in output
         assert "Outgoing BTC:" in output
@@ -197,7 +222,7 @@ class TestPrintWalletInfo:
         )
         MockId.from_pem.return_value = mock_identity
 
-        _print_wallet_info(100_000.0)
+        _print_wallet_info(100_000.0, ckbtc_minter=True)
         output = capsys.readouterr().out
         assert "640 sats" in output
         assert "fee dust" in output

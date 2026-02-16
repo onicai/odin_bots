@@ -81,21 +81,16 @@ class TestWalletCreate:
 # ---------------------------------------------------------------------------
 
 class TestWalletInfo:
-    @patch(f"{TR}.unwrap_canister_result", return_value=0)
-    @patch(f"{TR}.get_withdrawal_account",
-           return_value={"owner": "minter", "subaccount": []})
     @patch(f"{TR}.get_btc_address", return_value="bc1qtest123")
-    @patch(f"{TR}.get_pending_btc", return_value=0)
     @patch(f"{TR}.create_ckbtc_minter")
     @patch(f"{TR}.get_balance", return_value=25000)
     @patch(f"{TR}.create_icrc1_canister")
-    @patch(AG)
-    @patch(CL)
-    @patch(ID)
+    @patch("odin_bots.cli.balance.Agent")
+    @patch("odin_bots.cli.balance.Client")
+    @patch("odin_bots.cli.balance.Identity")
     def test_shows_info(self, MockIdentity, MockClient, MockAgent,
                          mock_create, mock_get_bal, mock_minter,
-                         mock_pending, mock_btc_addr, mock_withdrawal_acct,
-                         mock_unwrap, odin_project):
+                         mock_btc_addr, odin_project):
         mock_id = MagicMock()
         mock_id.sender.return_value = MagicMock(
             __str__=lambda s: "test-principal"
@@ -106,12 +101,13 @@ class TestWalletInfo:
         result = runner.invoke(app, ["wallet", "info"])
         assert result.exit_code == 0
         assert "25,000 sats" in result.output
-        assert "Wallet principal:" in result.output
+        assert "test-principal" in result.output
         assert "bc1qtest123" in result.output
-        assert "PEM file:" in result.output
-        assert "ckBTC minter:" in result.output
-        assert "Incoming BTC:" in result.output
-        assert "Outgoing BTC:" in result.output
+        assert "To fund your wallet:" in result.output
+        assert "Wallet PEM file:" in result.output
+        assert "Notes:" in result.output
+        # No minter section by default
+        assert "ckBTC minter:" not in result.output
 
     @patch(f"{TR}.unwrap_canister_result", return_value=0)
     @patch(f"{TR}.get_withdrawal_account",
@@ -143,7 +139,7 @@ class TestWalletInfo:
         MockIdentity.from_pem.return_value = mock_id
         MockIdentity.return_value = MagicMock()
 
-        result = runner.invoke(app, ["wallet", "info"])
+        result = runner.invoke(app, ["wallet", "info", "--ckbtc-minter"])
         assert result.exit_code == 0
         assert "ckBTC minter:" in result.output
         assert "5,000 sats" in result.output
@@ -176,7 +172,7 @@ class TestWalletInfo:
 
         mock_get_bal.side_effect = [25000, 30000]  # before, after conversion
 
-        result = runner.invoke(app, ["wallet", "info"])
+        result = runner.invoke(app, ["wallet", "info", "--ckbtc-minter"])
         assert result.exit_code == 0
         assert "converted 5,000 sats" in result.output
         assert "Updated ckBTC balance" in result.output
@@ -222,7 +218,7 @@ class TestWalletInfo:
             "amount": 50000,
         }]))
 
-        result = runner.invoke(app, ["wallet", "info"])
+        result = runner.invoke(app, ["wallet", "info", "--ckbtc-minter"])
         assert result.exit_code == 0
         assert "Sending BTC: Submitted" in result.output
         assert "50,000 sats" in result.output
@@ -423,11 +419,7 @@ class TestWalletBalance:
 # ---------------------------------------------------------------------------
 
 class TestBackupWarning:
-    @patch(f"{TR}.unwrap_canister_result", return_value=0)
-    @patch(f"{TR}.get_withdrawal_account",
-           return_value={"owner": "minter", "subaccount": []})
     @patch(f"{TR}.get_btc_address", return_value="bc1qtest123")
-    @patch(f"{TR}.get_pending_btc", return_value=0)
     @patch(f"{TR}.create_ckbtc_minter")
     @patch(f"{TR}.get_balance", return_value=25000)
     @patch(f"{TR}.create_icrc1_canister")
@@ -436,8 +428,7 @@ class TestBackupWarning:
     @patch(ID)
     def test_backup_warning_shown(self, MockIdentity, MockClient, MockAgent,
                                    mock_create, mock_get_bal, mock_minter,
-                                   mock_pending, mock_btc_addr,
-                                   mock_withdrawal_acct, mock_unwrap,
+                                   mock_btc_addr,
                                    odin_project):
         """wallet info shows the backup warning when PEM exists."""
         mock_id = MagicMock()
@@ -448,4 +439,4 @@ class TestBackupWarning:
         MockIdentity.return_value = MagicMock()
 
         result = runner.invoke(app, ["wallet", "info"])
-        assert "IMPORTANT: Back up" in result.output
+        assert "Back up .wallet/identity-private.pem" in result.output

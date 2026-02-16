@@ -199,24 +199,22 @@ def _print_padded_table(headers, rows):
         print(fmt.format(*row))
 
 
-def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
-                       monitor: bool = False) -> int:
-    """Print full wallet info: ckBTC balance, pending BTC, addresses, PEM path.
+def _print_wallet_info(btc_usd_rate: float | None, ckbtc_minter: bool = False,
+                       monitor: bool = False) -> tuple:
+    """Print wallet info: ckBTC balance and funding options.
 
-    Auto-triggers BTC→ckBTC conversion when pending deposits are detected.
+    When ckbtc_minter=True, also queries the ckBTC minter for incoming/outgoing
+    BTC status and auto-triggers BTC→ckBTC conversion.
 
     Returns:
-        Total wallet sats (ckBTC balance + pending BTC).
+        5-tuple (balance, pending, withdrawal_balance, active_count, address_btc).
+        Minter values are 0 when ckbtc_minter=False.
     """
     from odin_bots.transfers import (
-        check_btc_deposits,
         create_ckbtc_minter,
         create_icrc1_canister,
         get_balance,
         get_btc_address,
-        get_pending_btc,
-        get_withdrawal_account,
-        unwrap_canister_result,
     )
 
     pem_path = get_pem_file()
@@ -237,8 +235,56 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
     print("=" * 60)
     print(f"\nICRC-1 ckBTC: {fmt_sats(balance, btc_usd_rate)}")
 
-    # ckBTC minter section
+    # Fetch deposit address for funding options
     minter_anon = create_ckbtc_minter(anon_agent)
+    btc_address = get_btc_address(minter_anon, principal)
+
+    # Funding options
+    print()
+    print("To fund your wallet:")
+    print(f"-> Option 1: send ckBTC to your Wallet principal {principal}")
+    print(f"-> Option 2: send BTC to your Wallet BTC deposit address: {btc_address} (min deposit: {fmt_sats(10_000, btc_usd_rate)})")
+
+    # ckBTC minter section (only when requested)
+    pending = 0
+    withdrawal_balance = 0
+    active_withdrawals = []
+    address_btc = 0
+
+    if ckbtc_minter:
+        pending, withdrawal_balance, active_withdrawals, address_btc, balance = (
+            _print_ckbtc_minter_section(
+                btc_usd_rate, identity, principal, client, anon_agent,
+                icrc1_canister__anon, minter_anon, balance, monitor,
+            )
+        )
+
+    return balance, pending, withdrawal_balance, len(active_withdrawals), address_btc
+
+
+def _print_ckbtc_minter_section(
+    btc_usd_rate, identity, principal, client, anon_agent,
+    icrc1_canister__anon, minter_anon, balance, monitor,
+):
+    """Print ckBTC minter status: incoming/outgoing BTC.
+
+    Returns:
+        (pending, withdrawal_balance, active_withdrawals, address_btc, balance)
+    """
+    from odin_bots.transfers import (
+        check_btc_deposits,
+        create_ckbtc_minter,
+        get_balance,
+        get_btc_address,
+        get_pending_btc,
+        get_withdrawal_account,
+        unwrap_canister_result,
+    )
+    from odin_bots.cli.wallet import (
+        MEMPOOL_TX_URL, MEMPOOL_ADDRESS_URL,
+        load_withdrawal_statuses, remove_withdrawal,
+    )
+
     pending = get_pending_btc(minter_anon, principal)
 
     withdrawal_balance = 0
@@ -256,10 +302,6 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
         pass
 
     # BTC withdrawal status tracking
-    from odin_bots.cli.wallet import (
-        MEMPOOL_TX_URL, MEMPOOL_ADDRESS_URL,
-        load_withdrawal_statuses, remove_withdrawal,
-    )
     withdrawals = load_withdrawal_statuses()
     active_withdrawals = []
     for ws in withdrawals:
@@ -287,7 +329,6 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
         except Exception:
             pass
 
-    # Fetch deposit address (needed for mempool check and display)
     btc_address = get_btc_address(minter_anon, principal)
 
     print()
@@ -295,6 +336,7 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
 
     # Query mempool.space for BTC on the deposit address
     address_btc = 0
+    mempool = {}
     try:
         import requests as _requests
         addr_resp = _requests.get(
@@ -391,16 +433,7 @@ def _print_wallet_info(btc_usd_rate: float | None, verbose: bool = False,
         print()
         print("  Use --monitor to track progress: odin-bots wallet balance --monitor")
 
-    if verbose:
-        # Addresses
-        print()
-        print(f"Wallet principal: {principal}")
-        print(f"Wallet BTC deposit address: {btc_address} (min deposit: {fmt_sats(10_000, btc_usd_rate)})")
-
-        print()
-        print(f"PEM file: {pem_path}\n")
-
-    return balance, pending, withdrawal_balance, len(active_withdrawals), address_btc
+    return pending, withdrawal_balance, active_withdrawals, address_btc, balance
 
 
 def _check_btc_activity(btc_usd_rate: float | None = None) -> dict:
@@ -685,7 +718,7 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
 # Entry points
 # ---------------------------------------------------------------------------
 
-def run_wallet_balance(monitor: bool = False):
+def run_wallet_balance(monitor: bool = False, ckbtc_minter: bool = False):
     """Show wallet info only (no bot login required).
 
     Returns the 5-tuple from _print_wallet_info(), or None if wallet missing.
@@ -693,11 +726,12 @@ def run_wallet_balance(monitor: bool = False):
     if not require_wallet():
         return None
     btc_usd_rate = _fetch_btc_usd_rate()
-    return _print_wallet_info(btc_usd_rate, monitor=monitor)
+    return _print_wallet_info(btc_usd_rate, ckbtc_minter=ckbtc_minter,
+                              monitor=monitor)
 
 
 def run_all_balances(bot_names: list, token_id: str = "29m8",
-                     verbose: bool = False):
+                     verbose: bool = False, ckbtc_minter: bool = False):
     """Run the balances check for one or more bots with condensed tables.
 
     Args:
@@ -708,7 +742,9 @@ def run_all_balances(bot_names: list, token_id: str = "29m8",
     if not require_wallet():
         return
     btc_usd_rate = _fetch_btc_usd_rate()
-    wallet_balance, wallet_pending, wallet_withdrawal, _, _ = _print_wallet_info(btc_usd_rate)
+    wallet_balance, wallet_pending, wallet_withdrawal, _, _ = _print_wallet_info(
+        btc_usd_rate, ckbtc_minter=ckbtc_minter,
+    )
 
     print()
     print("=" * 60)
