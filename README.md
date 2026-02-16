@@ -4,6 +4,8 @@
   <img src="brand/logo/transparent_with_tagline_SMALL.png" alt="ODIN-BOTS" width="400">
 </p>
 
+# Powered by onicai Chain Fusion AI on the Internet Computer.
+
 ---
 
 ```

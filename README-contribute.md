@@ -41,3 +41,20 @@ git tag -a $RELEASE_TAG $RELEASE_SHA -m "$RELEASE_MESSAGE"
 # Push to GitHub
 git push origin $RELEASE_TAG
 ```
+
+6. Post to X via Typefully (@onicaiHQ):
+
+```
+odin-bots v<VERSION> is live on PyPI 🚀
+
+What's new:
+• <highlight 1>
+• <highlight 2>
+• (for devs) <highlight 3>
+
+pip install --upgrade odin-bots
+
+Powered by onicai Chain Fusion AI on the Internet Computer.
+
+github.com/onicai/odin_bots
+```
