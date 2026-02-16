@@ -17,7 +17,14 @@ brew install automake libtool
 1. Update the version in `pyproject.toml` and `src/odin_bots/__init__.py`
 2. Run `make test` — all tests must pass
 3. Publish to PyPI: `make publish`
-4. Commit and push to `main`
+4. Commit and push to `main`:
+   - Commit message must be exactly the version string, e.g. `v0.5.1`
+   - Do NOT add co-author lines or any other text
+   ```bash
+   git add pyproject.toml src/odin_bots/__init__.py
+   git commit -m "v0.5.1"
+   git push
+   ```
 5. Tag the release:
 
 ```bash
