@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odin-bots"
-version = "0.7.0"
+version = "0.7.1"
 description = "Bitcoin rune trading CLI & SDK"
 readme = "README.md"
 license = "MIT"
