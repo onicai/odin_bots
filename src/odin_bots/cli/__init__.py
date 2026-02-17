@@ -319,12 +319,125 @@ def persona_show(
 # ---------------------------------------------------------------------------
 
 def _start_chat():
-    """Start interactive chat with the active persona."""
+    """Start interactive chat with the active persona.
+
+    Onboarding wizard: init → API key → wallet → show address → chat.
+    """
+    from odin_bots.skills.executor import execute_tool
+
+    setup = execute_tool("setup_status", {})
+
+    # --- Step 1: Project init ---
+    if not setup.get("config_exists"):
+        print("No odin-bots project found in this directory.\n")
+        try:
+            answer = input("Initialize a new project here? [Y/n] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if answer in ("n", "no"):
+            print("\nRun 'odin-bots init' when you're ready.")
+            return
+
+        # Ask how many bots
+        try:
+            bots_input = input("How many bots? [3] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        num_bots = 3
+        if bots_input:
+            try:
+                num_bots = max(1, min(1000, int(bots_input)))
+            except ValueError:
+                print("Invalid number, using default (3).")
+
+        result = execute_tool("init", {"num_bots": num_bots})
+        if result.get("status") != "ok":
+            print(f"Error: {result.get('error', 'init failed')}")
+            return
+        bot_list = ", ".join(f"bot-{i}" for i in range(1, num_bots + 1))
+        print(f"Created project with {num_bots} bot(s): {bot_list}")
+        print()
+        # Re-check after init
+        setup = execute_tool("setup_status", {})
+
+    # --- Step 2: API key ---
+    if not setup.get("has_api_key"):
+        print("An Anthropic API key is needed for the AI chat persona.")
+        print("Get one at: https://console.anthropic.com/settings/keys\n")
+        try:
+            api_key = input("Paste your API key (sk-ant-...): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if not api_key:
+            print("\nNo key entered. Add it to .env and run 'odin-bots' again.")
+            return
+
+        _save_api_key(api_key)
+        print("Saved API key to .env")
+        print()
+
+    # --- Step 3: Wallet create ---
+    if not setup.get("wallet_exists"):
+        try:
+            answer = input("Create a new wallet? [Y/n] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
+        if answer in ("n", "no"):
+            print("\nRun 'odin-bots wallet create' when you're ready.")
+            return
+        result = execute_tool("wallet_create", {})
+        if result.get("status") != "ok":
+            print(f"Error: {result.get('error', 'wallet create failed')}")
+            return
+        print("Wallet created.")
+        print()
+        # Show deposit address and funding instructions
+        addr_result = execute_tool("wallet_receive", {})
+        if addr_result.get("status") == "ok":
+            print(f"  Principal:       {addr_result['wallet_principal']}")
+            print(f"  Deposit address: {addr_result['btc_deposit_address']}")
+            print(f"  Balance:         {addr_result['balance_display']}")
+            print()
+            print("  To start trading, send ckBTC or BTC to the deposit address above.")
+            print("  BTC deposits require min 10,000 sats and ~6 confirmations.")
+            print()
+        setup = execute_tool("setup_status", {})
+
     from odin_bots.cli.chat import run_chat
 
     persona_name = state.persona or get_default_persona()
     bot_name = state.bot_name or "bot-1"
     run_chat(persona_name=persona_name, bot_name=bot_name, verbose=state.verbose)
+
+
+def _save_api_key(api_key: str) -> None:
+    """Write an API key to .env (replace placeholder, update existing, or append)."""
+    import os
+    import re
+
+    env_path = Path(".env")
+    if env_path.exists():
+        content = env_path.read_text()
+        if "your-api-key-here" in content:
+            content = content.replace("your-api-key-here", api_key)
+        elif "ANTHROPIC_API_KEY" in content:
+            content = re.sub(
+                r"ANTHROPIC_API_KEY=.*",
+                f"ANTHROPIC_API_KEY={api_key}",
+                content,
+            )
+        else:
+            separator = "" if content.endswith("\n") else "\n"
+            content += f"{separator}ANTHROPIC_API_KEY={api_key}\n"
+        env_path.write_text(content)
+    else:
+        env_path.write_text(f"ANTHROPIC_API_KEY={api_key}\n")
+
+    os.environ["ANTHROPIC_API_KEY"] = api_key
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +570,7 @@ def init(
     upgrade: bool = typer.Option(
         False, "--upgrade", "-u", help="Upgrade existing project (add new files/settings)"
     ),
+    bots: int = typer.Option(3, "--bots", "-n", help="Number of bots to create (1-1000)"),
 ):
     """Initialize or upgrade an odin-bots project."""
     config_path = Path(CONFIG_FILENAME)
@@ -484,9 +598,10 @@ def init(
     _ensure_gitignore()
 
     # Write config
-    config_content = create_default_config()
+    config_content = create_default_config(num_bots=bots)
     config_path.write_text(config_content)
-    print(f"Created {CONFIG_FILENAME} with bots: bot-1, bot-2, bot-3")
+    bot_list = ", ".join(f"bot-{i}" for i in range(1, bots + 1))
+    print(f"Created {CONFIG_FILENAME} with bots: {bot_list}")
 
     print()
     print("Next steps:")
@@ -568,11 +683,17 @@ def withdraw(
 ):
     """Withdraw from Odin.Fun back to the odin-bots wallet."""
     _resolve_network(network)
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.withdraw import run_withdraw
 
     bot_names = _resolve_bot_names(bot, all_bots)
-    for bot_name in bot_names:
-        run_withdraw(bot_name=bot_name, amount=amount, verbose=state.verbose)
+    results = run_per_bot(
+        lambda name: run_withdraw(bot_name=name, amount=amount, verbose=state.verbose),
+        bot_names,
+    )
+    for bot_name, result in results:
+        if isinstance(result, Exception):
+            print(f"{bot_name}: FAILED — {result}")
 
 
 @app.command()
@@ -590,6 +711,7 @@ def trade(
 ):
     """Buy or sell tokens on Odin.Fun."""
     _resolve_network(network)
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.trade import run_trade
 
     bot_names = _resolve_bot_names(bot, all_bots)
@@ -599,11 +721,12 @@ def trade(
             print("Error: 'all-tokens' is only supported for sell, not buy")
             raise typer.Exit(1)
         from odin_bots.cli.balance import collect_balances
-        for bot_name in bot_names:
+
+        def _sell_all_tokens(bot_name):
             data = collect_balances(bot_name, verbose=state.verbose)
             if not data.token_holdings:
                 print(f"{bot_name}: no token holdings to sell")
-                continue
+                return
             for holding in data.token_holdings:
                 if holding["balance"] > 0:
                     run_trade(
@@ -611,12 +734,22 @@ def trade(
                         token_id=holding["token_id"], amount="all",
                         verbose=state.verbose,
                     )
+
+        results = run_per_bot(_sell_all_tokens, bot_names)
+        for bot_name, result in results:
+            if isinstance(result, Exception):
+                print(f"{bot_name}: FAILED — {result}")
     else:
-        for bot_name in bot_names:
-            run_trade(
-                bot_name=bot_name, action=action, token_id=token_id,
+        results = run_per_bot(
+            lambda name: run_trade(
+                bot_name=name, action=action, token_id=token_id,
                 amount=amount, verbose=state.verbose,
-            )
+            ),
+            bot_names,
+        )
+        for bot_name, result in results:
+            if isinstance(result, Exception):
+                print(f"{bot_name}: FAILED — {result}")
 
 
 @app.command()
@@ -630,13 +763,14 @@ def sweep(
     """Sell all tokens and withdraw all ckBTC back to the wallet."""
     _resolve_network(network)
     from odin_bots.cli.balance import collect_balances
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.trade import run_trade
     from odin_bots.cli.withdraw import run_withdraw
 
     bot_names = _resolve_bot_names(bot, all_bots)
 
-    # Phase 1: Sell all tokens for each bot
-    for bot_name in bot_names:
+    # Phase 1: Sell all tokens for each bot (concurrent)
+    def _sell_all(bot_name):
         data = collect_balances(bot_name, verbose=state.verbose)
         if not data.token_holdings:
             print(f"{bot_name}: no token holdings to sell")
@@ -649,9 +783,19 @@ def sweep(
                         verbose=state.verbose,
                     )
 
-    # Phase 2: Withdraw all ckBTC for each bot
-    for bot_name in bot_names:
-        run_withdraw(bot_name=bot_name, amount="all", verbose=state.verbose)
+    results = run_per_bot(_sell_all, bot_names)
+    for bot_name, result in results:
+        if isinstance(result, Exception):
+            print(f"{bot_name}: sell FAILED — {result}")
+
+    # Phase 2: Withdraw all ckBTC for each bot (concurrent)
+    results = run_per_bot(
+        lambda name: run_withdraw(bot_name=name, amount="all", verbose=state.verbose),
+        bot_names,
+    )
+    for bot_name, result in results:
+        if isinstance(result, Exception):
+            print(f"{bot_name}: withdraw FAILED — {result}")
 
 
 def main():

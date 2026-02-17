@@ -303,13 +303,17 @@ def get_bot_persona(bot_name: str) -> str:
     return bot.get("persona", get_default_persona())
 
 
-def create_default_config() -> str:
+def create_default_config(num_bots: int = 3) -> str:
     """Generate default config file content.
+
+    Args:
+        num_bots: Number of bot definitions to create (1-1000, default 3).
 
     Returns:
         TOML content as string.
     """
-    return '''# odin-bots configuration
+    num_bots = max(1, min(1000, num_bots))
+    header = '''# odin-bots configuration
 # See: https://github.com/onicai/odin_bots
 
 [settings]
@@ -327,12 +331,55 @@ default_persona = "iconfucius"
 # Bot definitions
 # Each bot gets its own trading identity on Odin.Fun.
 # Optional: persona = "<name>" assigns a trading persona to the bot.
-[bots.bot-1]
-description = "Bot 1"
-
-[bots.bot-2]
-description = "Bot 2"
-
-[bots.bot-3]
-description = "Bot 3"
 '''
+    bots = "\n".join(
+        f'[bots.bot-{i}]\ndescription = "Bot {i}"\n'
+        for i in range(1, num_bots + 1)
+    )
+    return header + bots
+
+
+def add_bots_to_config(current_max: int, target: int) -> list[str]:
+    """Append new bot sections to odin-bots.toml.
+
+    Args:
+        current_max: Highest existing bot number (e.g. 10 if bot-10 exists).
+        target: Desired total bot count.
+
+    Returns:
+        List of newly added bot names.
+    """
+    import re as _re
+
+    config_path = Path(CONFIG_FILENAME)
+    content = config_path.read_text()
+    new_names = []
+    new_sections = []
+    for i in range(current_max + 1, target + 1):
+        name = f"bot-{i}"
+        new_names.append(name)
+        new_sections.append(f'[bots.{name}]\ndescription = "Bot {i}"\n')
+    if new_sections:
+        separator = "" if content.endswith("\n") else "\n"
+        content += separator + "\n".join(new_sections)
+        config_path.write_text(content)
+    return new_names
+
+
+def remove_bots_from_config(bot_names: list[str]) -> None:
+    """Remove bot sections from odin-bots.toml.
+
+    Args:
+        bot_names: List of bot names to remove (e.g. ["bot-8", "bot-9"]).
+    """
+    import re as _re
+
+    config_path = Path(CONFIG_FILENAME)
+    content = config_path.read_text()
+    for name in bot_names:
+        # Match [bots.<name>] and everything until next [section] or EOF
+        pattern = rf'\[bots\.{_re.escape(name)}\]\n(?:[^\[]*)'
+        content = _re.sub(pattern, '', content)
+    # Clean up triple+ blank lines
+    content = _re.sub(r'\n{3,}', '\n\n', content)
+    config_path.write_text(content)

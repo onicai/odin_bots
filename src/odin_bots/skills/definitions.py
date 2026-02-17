@@ -11,10 +11,64 @@ TOOLS: list[dict] = [
     # Read-only tools (no confirmation needed)
     # ------------------------------------------------------------------
     {
+        "name": "fmt_sats",
+        "description": (
+            "Format a satoshi amount for display. "
+            "Returns the amount with comma separators and current USD value, "
+            "e.g. '5,000 sats ($5.00)'. "
+            "Always use this tool when displaying BTC or ckBTC amounts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sats": {
+                    "type": "integer",
+                    "description": "Amount in satoshis to format.",
+                },
+            },
+            "required": ["sats"],
+        },
+        "requires_confirmation": False,
+        "category": "read",
+    },
+    {
+        "name": "setup_status",
+        "description": (
+            "Check if the odin-bots project is initialized and ready. "
+            "Returns which setup steps have been completed "
+            "(config, wallet, API key)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "requires_confirmation": False,
+        "category": "read",
+    },
+    {
+        "name": "bot_list",
+        "description": (
+            "List all configured bots (names and count). "
+            "Fast — reads config only, no network calls. "
+            "Use this when the user asks how many bots they have, "
+            "or wants to see bot names."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "requires_confirmation": False,
+        "category": "read",
+    },
+    {
         "name": "wallet_balance",
         "description": (
             "Check wallet ckBTC balance and bot holdings on Odin.fun. "
-            "Returns wallet balance, bot balances, and token holdings."
+            "Returns wallet balance, bot balances, and token holdings. "
+            "Use ckbtc_minter=true to also show incoming/outgoing BTC status "
+            "from the ckBTC minter (pending deposits, withdrawal progress)."
         ),
         "input_schema": {
             "type": "object",
@@ -31,7 +85,35 @@ TOOLS: list[dict] = [
                     "description": "Check all configured bots.",
                     "default": False,
                 },
+                "ckbtc_minter": {
+                    "type": "boolean",
+                    "description": (
+                        "Show ckBTC minter status: incoming BTC deposits "
+                        "pending conversion and outgoing BTC withdrawals. "
+                        "Use when the user sent BTC and wants to check "
+                        "if it arrived or is being converted."
+                    ),
+                    "default": False,
+                },
             },
+            "required": [],
+        },
+        "requires_confirmation": False,
+        "category": "read",
+    },
+    {
+        "name": "wallet_monitor",
+        "description": (
+            "Check the ckBTC minter for incoming BTC deposit status and "
+            "outgoing BTC withdrawal progress. Shows confirmation count, "
+            "pending amounts, and auto-triggers BTC-to-ckBTC conversion. "
+            "Use when the user sent BTC to their deposit address and wants "
+            "to know if it arrived, how many confirmations it has, or when "
+            "it will be converted to ckBTC."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
             "required": [],
         },
         "requires_confirmation": False,
@@ -118,8 +200,126 @@ TOOLS: list[dict] = [
         "requires_confirmation": False,
         "category": "read",
     },
+    {
+        "name": "security_status",
+        "description": (
+            "Check the security posture of the odin-bots installation. "
+            "Reports whether blst (IC certificate verification) is installed, "
+            "whether verify_certificates is enabled, and whether session "
+            "caching is on. Use this when the user asks about security, "
+            "certificate verification, or when the total holdings across "
+            "wallet and bots exceed $500 USD."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "requires_confirmation": False,
+        "category": "read",
+    },
     # ------------------------------------------------------------------
-    # State-changing tools (confirmation required)
+    # Setup tools (confirmation required — create files on disk)
+    # ------------------------------------------------------------------
+    {
+        "name": "install_blst",
+        "description": (
+            "Install the blst library (BLS12-381) for IC certificate "
+            "verification. Detects the OS, checks for prerequisites "
+            "(C compiler, SWIG), builds blst from source, and enables "
+            "verify_certificates in odin-bots.toml. Requires git and a "
+            "C compiler. Use when the user wants to enable certificate "
+            "verification or improve security."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        "requires_confirmation": True,
+        "category": "write",
+    },
+    {
+        "name": "init",
+        "description": (
+            "Initialize an odin-bots project in the current directory. "
+            "Creates odin-bots.toml, .env, and .gitignore."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": "Overwrite existing config if present.",
+                    "default": False,
+                },
+                "num_bots": {
+                    "type": "integer",
+                    "description": "Number of bots to create (1-1000).",
+                    "default": 3,
+                },
+            },
+            "required": [],
+        },
+        "requires_confirmation": True,
+        "category": "write",
+    },
+    {
+        "name": "wallet_create",
+        "description": (
+            "Create a new Ed25519 wallet identity for odin-bots. "
+            "Generates .wallet/identity-private.pem."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": (
+                        "Overwrite existing wallet "
+                        "(WARNING: changes your wallet address)."
+                    ),
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+        "requires_confirmation": True,
+        "category": "write",
+    },
+    {
+        "name": "set_bot_count",
+        "description": (
+            "Change the number of bots in the project configuration. "
+            "When increasing, new bot sections are added to odin-bots.toml. "
+            "When decreasing, bots are checked for holdings first — "
+            "if any bot to be removed has a balance or tokens, "
+            "the tool returns the holdings so you can ask the user what to do. "
+            "Use force=true to skip the holdings check."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "num_bots": {
+                    "type": "integer",
+                    "description": "Desired total number of bots (1-1000).",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": (
+                        "Skip holdings check when removing bots. "
+                        "Only use after the user has confirmed."
+                    ),
+                    "default": False,
+                },
+            },
+            "required": ["num_bots"],
+        },
+        "requires_confirmation": True,
+        "category": "write",
+    },
+    # ------------------------------------------------------------------
+    # Trading tools (confirmation required)
     # ------------------------------------------------------------------
     {
         "name": "fund",

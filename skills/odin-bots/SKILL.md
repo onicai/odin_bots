@@ -50,6 +50,9 @@ When the user asks to do something, use the corresponding command:
 
 | User intent                              | Command                                                     |
 |------------------------------------------|-------------------------------------------------------------|
+| Check if project is set up               | `setup_status`                                              |
+| Initialize a new project                 | `init`                                                      |
+| Create a wallet                          | `wallet_create`                                             |
 | Check wallet balance                     | `wallet_balance`                                            |
 | Check a specific bot's balance           | `wallet_balance --bot_name bot-1`                           |
 | Check all bots                           | `wallet_balance --all_bots`                                 |
@@ -67,6 +70,17 @@ When the user asks to do something, use the corresponding command:
 ## Commands Reference
 
 All commands output JSON to stdout. Errors return `{"status": "error", "error": "message"}`.
+
+### Setup commands
+
+**`setup_status`** — Check if the project is initialized and ready
+- Returns: `config_exists`, `wallet_exists`, `env_exists`, `has_api_key`, `ready`
+
+**`init`** — Initialize an odin-bots project (creates config, .env, .gitignore)
+- `--force`: Overwrite existing config
+
+**`wallet_create`** — Create a new Ed25519 wallet identity
+- `--force`: Overwrite existing wallet (WARNING: changes address)
 
 ### Read-only commands
 
@@ -117,6 +131,15 @@ All commands output JSON to stdout. Errors return `{"status": "error", "error": 
 ## Examples
 
 ```bash
+# Check if project is ready
+./scripts/odin-bots-skill.py setup_status
+
+# Initialize project
+./scripts/odin-bots-skill.py init
+
+# Create wallet
+./scripts/odin-bots-skill.py wallet_create
+
 # Check wallet balance
 ./scripts/odin-bots-skill.py wallet_balance
 

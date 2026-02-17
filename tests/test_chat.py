@@ -46,13 +46,21 @@ class TestChatCommand:
         assert args.kwargs["bot_name"] == "bot-2"
 
     @patch("odin_bots.cli.chat.run_chat")
-    def test_bare_invocation_starts_chat(self, mock_run_chat):
+    @patch("odin_bots.skills.executor.execute_tool", return_value={
+        "status": "ok", "config_exists": True, "wallet_exists": True,
+        "env_exists": True, "has_api_key": True, "ready": True,
+    })
+    def test_bare_invocation_starts_chat(self, mock_exec, mock_run_chat):
         result = runner.invoke(app, [])
         assert result.exit_code == 0
         mock_run_chat.assert_called_once()
 
     @patch("odin_bots.cli.chat.run_chat")
-    def test_bare_with_persona_option(self, mock_run_chat):
+    @patch("odin_bots.skills.executor.execute_tool", return_value={
+        "status": "ok", "config_exists": True, "wallet_exists": True,
+        "env_exists": True, "has_api_key": True, "ready": True,
+    })
+    def test_bare_with_persona_option(self, mock_exec, mock_run_chat):
         result = runner.invoke(app, ["--persona", "iconfucius"])
         assert result.exit_code == 0
         args = mock_run_chat.call_args

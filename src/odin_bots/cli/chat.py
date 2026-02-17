@@ -109,12 +109,18 @@ QUOTE_TOPICS = [
 
 
 class _Spinner:
-    """Animated spinner for the terminal."""
+    """Animated spinner for the terminal.
+
+    Captures a reference to the real stdout at creation time so the
+    animation keeps running even when redirect_stdout is active
+    (e.g. inside _capture() in the skills executor).
+    """
 
     def __init__(self, message: str = ""):
         self._message = message
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._stdout = sys.stdout  # real terminal, before any redirect
 
     def __enter__(self):
         self._thread = threading.Thread(target=self._spin, daemon=True)
@@ -126,14 +132,14 @@ class _Spinner:
         if self._thread:
             self._thread.join()
         # Clear the spinner line
-        sys.stdout.write("\r\033[K")
-        sys.stdout.flush()
+        self._stdout.write("\r\033[K")
+        self._stdout.flush()
 
     def _spin(self):
         frames = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
         while not self._stop.is_set():
-            sys.stdout.write(f"\r{next(frames)} {self._message}")
-            sys.stdout.flush()
+            self._stdout.write(f"\r{next(frames)} {self._message}")
+            self._stdout.flush()
             time.sleep(0.08)
 
 
@@ -203,6 +209,10 @@ _MAX_TOOL_ITERATIONS = 10
 
 def _describe_tool_call(name: str, tool_input: dict) -> str:
     """Return a human-readable description of a tool call for confirmation."""
+    if name == "init":
+        return "Initialize odin-bots project in current directory"
+    if name == "wallet_create":
+        return "Create a new wallet identity"
     if name == "fund":
         return f"Fund {tool_input.get('bot_name')} with {tool_input.get('amount'):,} sats"
     if name == "trade_buy":
@@ -225,6 +235,15 @@ def _describe_tool_call(name: str, tool_input: dict) -> str:
             f"Send {tool_input.get('amount')} sats to "
             f"{tool_input.get('address')}"
         )
+    if name == "set_bot_count":
+        n = tool_input.get("num_bots", "?")
+        force = tool_input.get("force", False)
+        desc = f"Change bot count to {n}"
+        if force:
+            desc += " (skip holdings check)"
+        return desc
+    if name == "install_blst":
+        return "Install blst library for IC certificate verification"
     return f"{name}({json.dumps(tool_input)})"
 
 
@@ -233,6 +252,9 @@ def _run_tool_loop(backend, messages: list[dict], system: str,
     """Run the tool use loop until a text-only response is produced.
 
     Modifies messages in-place (appends assistant + tool_result messages).
+    The persona prefix is only printed once — on the final text-only response.
+    Pre-tool reasoning text (e.g. "Let me look that up") is suppressed to
+    avoid a double persona prefix.
     """
     for _ in range(_MAX_TOOL_ITERATIONS):
         response = backend.chat_with_tools(messages, system, tools)
@@ -249,7 +271,7 @@ def _run_tool_loop(backend, messages: list[dict], system: str,
                 if block.type == "text"
             )
             messages.append({"role": "assistant", "content": text})
-            print(f"\n{persona_name}: {text}\n")
+            print(f"\n{persona_name} says:\n\n{text}\n")
             return
 
         # Has tool calls — process them
@@ -259,10 +281,8 @@ def _run_tool_loop(backend, messages: list[dict], system: str,
             "content": [_block_to_dict(b) for b in response.content],
         })
 
-        # Print any text blocks (persona's reasoning before tool calls)
-        for block in response.content:
-            if block.type == "text" and block.text.strip():
-                print(f"\n{persona_name}: {block.text}")
+        # Don't print pre-tool reasoning text — it would show a persona
+        # prefix that gets repeated when the final response is printed.
 
         # Execute each tool call
         tool_results = []
@@ -276,10 +296,10 @@ def _run_tool_loop(backend, messages: list[dict], system: str,
             if needs_confirm:
                 desc = _describe_tool_call(block.name, block.input)
                 try:
-                    answer = input(f"\n  {desc} [y/N] ").strip().lower()
+                    answer = input(f"\n  {desc} [Y/n] ").strip().lower()
                 except (KeyboardInterrupt, EOFError):
                     answer = "n"
-                if answer != "y":
+                if answer in ("n", "no"):
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -340,6 +360,18 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
 
     # Build system prompt with memory context
     system = persona.system_prompt
+
+    # Inject setup status so the persona can guide users through setup
+    setup = execute_tool("setup_status", {})
+    if not setup.get("ready"):
+        system += "\n\n## Setup Status\n"
+        system += (
+            f"Config: {'ready' if setup.get('config_exists') else 'MISSING — use init tool'}\n"
+            f"Wallet: {'ready' if setup.get('wallet_exists') else 'MISSING — use wallet_create tool'}\n"
+            f"API key: {'ready' if setup.get('has_api_key') else 'MISSING — user must add ANTHROPIC_API_KEY to .env'}\n"
+        )
+        system += "\nGuide the user through any missing setup steps before trading."
+
     strategy = read_strategy(persona_name)
     recent_trades = read_trades(persona_name, last_n=5)
 
@@ -378,11 +410,11 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
             print("\033[2m" + "─" * 60 + "\033[0m")
             user_input = input("You: ").strip()
         except (KeyboardInterrupt, EOFError):
-            print(f"\n\n{persona.name}: {goodbye}")
+            print(f"\n\n{persona.name}:\n{goodbye}")
             break
 
         if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
-            print(f"\n{persona.name}: {goodbye}")
+            print(f"\n{persona.name}:\n{goodbye}")
             break
 
         if not user_input:

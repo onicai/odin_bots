@@ -45,6 +45,93 @@ from odin_bots.transfers import (
 from odin_bots.candid import CKBTC_LEDGER_CANDID, ODIN_DEPOSIT_CANDID, ODIN_TRADING_CANDID
 
 
+def _fund_one_bot(bot_name, amount, pem_content, verbose, btc_usd_rate):
+    """Fund a single bot and deposit into Odin.Fun. Thread-safe.
+
+    Creates its own IC agents so it can run in a thread pool without
+    sharing mutable state with other threads.
+
+    Returns:
+        dict with "status" key: "ok" on success, "failed" on error.
+    """
+    set_verbose(verbose)
+
+    # Create thread-local agents from the shared PEM content
+    wallet_identity = Identity.from_pem(pem_content)
+    client = Client(url=IC_HOST)
+    wallet_agent = Agent(wallet_identity, client)
+    icrc1_canister__wallet = create_icrc1_canister(wallet_agent)
+
+    # 3a: SIWB login
+    auth = load_session(bot_name=bot_name, verbose=verbose)
+    if not auth:
+        log("")
+        log(f"  No cached session for {bot_name}, performing SIWB login...")
+        auth = siwb_login(bot_name=bot_name, verbose=verbose)
+        set_verbose(verbose)
+
+    bot_principal = auth["bot_principal_text"]
+    delegate_identity = auth["delegate_identity"]
+    patch_delegate_sender(delegate_identity)
+    log(f"  Bot principal: {bot_principal}")
+
+    # 3b: Transfer from wallet to bot (amount + fee for approve step)
+    transfer_amount = amount + CKBTC_FEE
+    log(f"  Transferring {fmt_sats(transfer_amount, btc_usd_rate)} to bot...")
+    result = transfer(icrc1_canister__wallet, bot_principal, transfer_amount)
+    if isinstance(result, dict) and "Err" in result:
+        return {"status": "failed", "step": "transfer", "error": str(result["Err"])}
+    tx_index = result.get("Ok", result) if isinstance(result, dict) else result
+    log(f"  Transfer done, block index: {tx_index}")
+
+    # 3c: ICRC-2 Approve (bot allows deposit canister to spend)
+    auth_agent = Agent(delegate_identity, client)
+    icrc1_canister__bot = Canister(
+        agent=auth_agent,
+        canister_id=CKBTC_LEDGER_CANISTER_ID,
+        candid_str=CKBTC_LEDGER_CANDID,
+    )
+
+    deposit_canister_principal = Principal.from_str(ODIN_DEPOSIT_CANISTER_ID)
+    approve_amount = amount + CKBTC_FEE
+
+    log(f"  Approving {fmt_sats(approve_amount, btc_usd_rate)} for deposit canister...")
+    approve_result = unwrap_canister_result(icrc1_canister__bot.icrc2_approve({
+        "spender": {"owner": deposit_canister_principal, "subaccount": []},
+        "amount": approve_amount,
+        "fee": [],
+        "memo": [],
+        "from_subaccount": [],
+        "created_at_time": [],
+        "expected_allowance": [],
+        "expires_at": [],
+    }, verify_certificate=get_verify_certificates()))
+
+    log(f"  Approve result: {approve_result}")
+
+    if isinstance(approve_result, dict) and "Err" in approve_result:
+        return {"status": "failed", "step": "approve", "error": str(approve_result["Err"])}
+
+    # 3d: ckbtc_deposit (deposit canister pulls ckBTC into Odin.Fun)
+    odin_deposit = Canister(
+        agent=auth_agent,
+        canister_id=ODIN_DEPOSIT_CANISTER_ID,
+        candid_str=ODIN_DEPOSIT_CANDID,
+    )
+
+    log(f"  Depositing {fmt_sats(amount, btc_usd_rate)} into Odin.Fun...")
+    deposit_result = unwrap_canister_result(
+        odin_deposit.ckbtc_deposit([], amount, verify_certificate=get_verify_certificates())
+    )
+
+    log(f"  Deposit result: {deposit_result}")
+
+    if isinstance(deposit_result, dict) and "err" in deposit_result:
+        return {"status": "failed", "step": "deposit", "error": str(deposit_result["err"])}
+
+    return {"status": "ok"}
+
+
 def run_fund(bot_names: list, amount: int, verbose: bool = False):
     """Fund bot(s) and deposit into Odin.Fun trading accounts.
 
@@ -87,10 +174,7 @@ def run_fund(bot_names: list, amount: int, verbose: bool = False):
     log(f"  Wallet principal: {wallet_principal}")
 
     client = Client(url=IC_HOST)
-    wallet_agent = Agent(wallet_identity, client)
     anon_agent = Agent(Identity(anonymous=True), client)
-
-    icrc1_canister__wallet = create_icrc1_canister(wallet_agent)
     icrc1_canister__anon = create_icrc1_canister(anon_agent)
 
     # -----------------------------------------------------------------------
@@ -114,87 +198,27 @@ def run_fund(bot_names: list, amount: int, verbose: bool = False):
         return
 
     # -----------------------------------------------------------------------
-    # Step 3: Fund and deposit for each bot
+    # Step 3: Fund and deposit for each bot (concurrent)
     # -----------------------------------------------------------------------
     print(f"Step 3: Funding {len(bot_names)} bot(s) with "
           f"{_fmt(amount)} each...")
 
+    from odin_bots.cli.concurrent import run_per_bot
+
+    results = run_per_bot(
+        lambda name: _fund_one_bot(name, amount, pem_content, verbose, btc_usd_rate),
+        bot_names,
+    )
+
     funded = []
-    for bot_name in bot_names:
-        print(f"  {bot_name}...", end=" ", flush=True)
-
-        # 3a: SIWB login
-        auth = load_session(bot_name=bot_name, verbose=verbose)
-        if not auth:
-            log("")
-            log(f"  No cached session for {bot_name}, performing SIWB login...")
-            auth = siwb_login(bot_name=bot_name, verbose=verbose)
-            set_verbose(verbose)
-
-        bot_principal = auth["bot_principal_text"]
-        delegate_identity = auth["delegate_identity"]
-        patch_delegate_sender(delegate_identity)
-        log(f"  Bot principal: {bot_principal}")
-
-        # 3b: Transfer from wallet to bot (amount + fee for approve step)
-        transfer_amount = amount + CKBTC_FEE
-        log(f"  Transferring {_fmt(transfer_amount)} to bot...")
-        result = transfer(icrc1_canister__wallet, bot_principal, transfer_amount)
-        if isinstance(result, dict) and "Err" in result:
-            print(f"FAILED (transfer): {result['Err']}")
-            continue
-        tx_index = result.get("Ok", result) if isinstance(result, dict) else result
-        log(f"  Transfer done, block index: {tx_index}")
-
-        # 3c: ICRC-2 Approve (bot allows deposit canister to spend)
-        auth_agent = Agent(delegate_identity, client)
-        icrc1_canister__bot = Canister(
-            agent=auth_agent,
-            canister_id=CKBTC_LEDGER_CANISTER_ID,
-            candid_str=CKBTC_LEDGER_CANDID,
-        )
-
-        deposit_canister_principal = Principal.from_str(ODIN_DEPOSIT_CANISTER_ID)
-        approve_amount = amount + CKBTC_FEE
-
-        log(f"  Approving {_fmt(approve_amount)} for deposit canister...")
-        approve_result = unwrap_canister_result(icrc1_canister__bot.icrc2_approve({
-            "spender": {"owner": deposit_canister_principal, "subaccount": []},
-            "amount": approve_amount,
-            "fee": [],
-            "memo": [],
-            "from_subaccount": [],
-            "created_at_time": [],
-            "expected_allowance": [],
-            "expires_at": [],
-        }, verify_certificate=get_verify_certificates()))
-
-        log(f"  Approve result: {approve_result}")
-
-        if isinstance(approve_result, dict) and "Err" in approve_result:
-            print(f"FAILED (approve): {approve_result['Err']}")
-            continue
-
-        # 3d: ckbtc_deposit (deposit canister pulls ckBTC into Odin.Fun)
-        odin_deposit = Canister(
-            agent=auth_agent,
-            canister_id=ODIN_DEPOSIT_CANISTER_ID,
-            candid_str=ODIN_DEPOSIT_CANDID,
-        )
-
-        log(f"  Depositing {_fmt(amount)} into Odin.Fun...")
-        deposit_result = unwrap_canister_result(
-            odin_deposit.ckbtc_deposit([], amount, verify_certificate=get_verify_certificates())
-        )
-
-        log(f"  Deposit result: {deposit_result}")
-
-        if isinstance(deposit_result, dict) and "err" in deposit_result:
-            print(f"FAILED (deposit): {deposit_result['err']}")
-            continue
-
-        funded.append(bot_name)
-        print(f"done ({_fmt(amount)})")
+    for bot_name, result in results:
+        if isinstance(result, Exception):
+            print(f"  {bot_name}: FAILED — {result}")
+        elif result["status"] == "failed":
+            print(f"  {bot_name}: FAILED ({result['step']}): {result['error']}")
+        else:
+            funded.append(bot_name)
+            print(f"  {bot_name}: done ({_fmt(amount)})")
 
     # -----------------------------------------------------------------------
     # Summary

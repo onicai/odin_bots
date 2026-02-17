@@ -51,6 +51,54 @@ class TestWalletCreate:
         assert result.exit_code == 0
         assert "Wallet created" in result.output
 
+    @patch(ID)
+    def test_force_creates_backup(self, MockIdentity, odin_project):
+        """--force should back up existing PEM before creating new one."""
+        mock_identity = MagicMock()
+        mock_identity.to_pem.return_value = b"new-pem-content"
+        MockIdentity.return_value = mock_identity
+
+        original_content = (odin_project / ".wallet" / "identity-private.pem").read_text()
+        result = runner.invoke(app, ["wallet", "create", "--force"])
+        assert result.exit_code == 0
+        assert "Backed up" in result.output
+
+        backup = odin_project / ".wallet" / "identity-private.pem-backup-01"
+        assert backup.exists()
+        assert backup.read_text() == original_content
+
+    @patch(ID)
+    def test_force_increments_backup_number(self, MockIdentity, odin_project):
+        """Multiple --force calls should create -backup-01, -backup-02, etc."""
+        mock_identity = MagicMock()
+        mock_identity.to_pem.return_value = b"new-pem"
+        MockIdentity.return_value = mock_identity
+
+        # Create a pre-existing backup-01
+        (odin_project / ".wallet" / "identity-private.pem-backup-01").write_text("old-backup")
+
+        result = runner.invoke(app, ["wallet", "create", "--force"])
+        assert result.exit_code == 0
+
+        # backup-01 should be untouched, backup-02 should exist
+        assert (odin_project / ".wallet" / "identity-private.pem-backup-01").read_text() == "old-backup"
+        assert (odin_project / ".wallet" / "identity-private.pem-backup-02").exists()
+
+    @patch(ID)
+    def test_force_preserves_backup_content(self, MockIdentity, odin_project):
+        """Backup should contain the old PEM, new file should have new content."""
+        mock_identity = MagicMock()
+        mock_identity.to_pem.return_value = b"brand-new-key"
+        MockIdentity.return_value = mock_identity
+
+        old_content = (odin_project / ".wallet" / "identity-private.pem").read_text()
+        runner.invoke(app, ["wallet", "create", "--force"])
+
+        backup = odin_project / ".wallet" / "identity-private.pem-backup-01"
+        assert backup.read_text() == old_content
+        new_content = (odin_project / ".wallet" / "identity-private.pem").read_bytes()
+        assert new_content == b"brand-new-key"
+
     @pytest.mark.skipif(os.name == "nt", reason="Unix file permissions not supported on Windows")
     @patch(ID)
     def test_sets_pem_permissions(self, MockIdentity, tmp_path, monkeypatch):
@@ -440,3 +488,59 @@ class TestBackupWarning:
 
         result = runner.invoke(app, ["wallet", "info"])
         assert "Back up .wallet/identity-private.pem" in result.output
+
+
+# ---------------------------------------------------------------------------
+# _backup_pem (unit tests)
+# ---------------------------------------------------------------------------
+
+class TestBackupPem:
+    def test_creates_backup_01(self, tmp_path):
+        from odin_bots.cli.wallet import _backup_pem
+
+        pem = tmp_path / "identity-private.pem"
+        pem.write_text("original-key")
+
+        result = _backup_pem(pem)
+        assert result == tmp_path / "identity-private.pem-backup-01"
+        assert result.exists()
+        assert result.read_text() == "original-key"
+        assert not pem.exists()  # original was moved
+
+    def test_increments_past_existing_backups(self, tmp_path):
+        from odin_bots.cli.wallet import _backup_pem
+
+        pem = tmp_path / "identity-private.pem"
+        pem.write_text("current-key")
+        # Pre-create backup-01 and backup-02
+        (tmp_path / "identity-private.pem-backup-01").write_text("old-1")
+        (tmp_path / "identity-private.pem-backup-02").write_text("old-2")
+
+        result = _backup_pem(pem)
+        assert result.name == "identity-private.pem-backup-03"
+        assert result.read_text() == "current-key"
+        # Existing backups untouched
+        assert (tmp_path / "identity-private.pem-backup-01").read_text() == "old-1"
+        assert (tmp_path / "identity-private.pem-backup-02").read_text() == "old-2"
+
+    def test_returns_backup_path(self, tmp_path):
+        from odin_bots.cli.wallet import _backup_pem
+
+        pem = tmp_path / "identity-private.pem"
+        pem.write_text("key")
+
+        backup = _backup_pem(pem)
+        assert backup.parent == tmp_path
+        assert backup.name == "identity-private.pem-backup-01"
+
+    def test_raises_after_99_backups(self, tmp_path):
+        from odin_bots.cli.wallet import _backup_pem
+
+        pem = tmp_path / "identity-private.pem"
+        pem.write_text("key")
+        # Create backups 01-99
+        for i in range(1, 100):
+            (tmp_path / f"identity-private.pem-backup-{i:02d}").write_text(f"backup-{i}")
+
+        with pytest.raises(RuntimeError, match="Too many PEM backups"):
+            _backup_pem(pem)

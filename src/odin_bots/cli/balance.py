@@ -86,6 +86,14 @@ def collect_balances(bot_name: str, token_id: str = "29m8",
     log("=" * 60)
     auth = load_session(bot_name=bot_name, verbose=verbose)
     if not auth:
+        # Before full SIWB login, check if this bot has a key at all.
+        # If not, it has never been used and has no balances — skip it.
+        from odin_bots.siwb import bot_has_public_key
+        if not bot_has_public_key(bot_name):
+            log(f"  Bot '{bot_name}' has no public key (never used). Skipping.")
+            return BotBalances(
+                bot_name=bot_name, bot_principal="(not initialized)",
+            )
         log("No valid cached session, performing full SIWB login...")
         auth = siwb_login(bot_name=bot_name, verbose=verbose)
     bot_principal_text = auth["bot_principal_text"]
@@ -751,14 +759,19 @@ def run_all_balances(bot_names: list, token_id: str = "29m8",
     print("Bot Holdings at Odin.Fun")
     print("=" * 60)
 
+    from odin_bots.cli.concurrent import run_per_bot
+
     all_data = []
-    for bot_name in bot_names:
-        try:
-            print(f"Gathering data for bot: {bot_name}...")
-            data = collect_balances(bot_name, token_id, verbose=verbose)
-            all_data.append(data)
-        except Exception as e:
-            print(f"  Failed to get balances for bot '{bot_name}': {e}")
+    print(f"Gathering data for {len(bot_names)} bot(s)...")
+    results = run_per_bot(
+        lambda name: collect_balances(name, token_id, verbose=verbose),
+        bot_names,
+    )
+    for bot_name, result in results:
+        if isinstance(result, Exception):
+            print(f"  Failed to get balances for bot '{bot_name}': {result}")
+        else:
+            all_data.append(result)
     if not all_data:
         return
     _print_holdings_table(all_data, btc_usd_rate, wallet_balance, wallet_pending, wallet_withdrawal)

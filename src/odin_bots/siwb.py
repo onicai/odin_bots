@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import stat
+import threading
 import time
 
 from curl_cffi import requests as cffi_requests
@@ -95,7 +96,42 @@ def to_hex(v):
 # Public key retrieval (query-first with update fallback)
 # ---------------------------------------------------------------------------
 
-def _get_public_key(cksigner, bot_name: str, wallet_agent=None) -> tuple[str, str]:
+def bot_has_public_key(bot_name: str) -> bool:
+    """Fast check whether a bot has a public key cached in the canister.
+
+    Uses an anonymous query call — no authentication, no fees, no side effects.
+    Returns False if the bot has never been used (key not yet generated).
+    """
+    from icp_agent import Agent, Client
+    from icp_canister import Canister
+    from icp_identity import Identity
+
+    client = Client(url=IC_HOST)
+    anon_agent = Agent(Identity(anonymous=True), client)
+    cksigner = Canister(
+        agent=anon_agent,
+        canister_id=get_cksigner_canister_id(),
+        candid_str=ONICAI_CKSIGNER_CANDID,
+    )
+    try:
+        result = unwrap(cksigner.getPublicKeyQuery(
+            {"botName": bot_name},
+            verify_certificate=get_verify_certificates(),
+        ))
+        return "Ok" in result
+    except Exception:
+        return False
+
+
+# Lock to serialize icrc2_approve + getPublicKey (update) across threads.
+# ICRC-2 approve sets a total allowance (not additive), so concurrent
+# threads would overwrite each other's approvals. This lock ensures
+# each thread's approve+spend completes before the next begins.
+_fee_payment_lock = threading.Lock()
+
+
+def _get_public_key(cksigner, bot_name: str, wallet_agent=None,
+                    query_only: bool = False) -> tuple[str, str]:
     """Get bot public key, trying query call first then update on cache miss.
 
     The query call (getPublicKeyQuery) is free. The update call (getPublicKey)
@@ -104,27 +140,38 @@ def _get_public_key(cksigner, bot_name: str, wallet_agent=None) -> tuple[str, st
     Args:
         cksigner: Canister object for the ckSigner canister.
         bot_name: Bot name to fetch the public key for.
-        wallet_agent: Agent for the wallet identity (needed for fee payment on update).
+        wallet_agent: Agent for the wallet identity (needed for fee payment
+            on update).
+        query_only: If True, only use the free query call — never fall back
+            to the paid update call. Use for read-only operations like
+            balance checks where generating a new key is not needed.
 
     Returns:
         Tuple of (publicKeyHex, address).
 
     Raises:
-        RuntimeError: If both query and update calls fail.
+        RuntimeError: If the query fails (and query_only=True) or if both
+            query and update calls fail.
     """
-    # TODO: Install blst for certificate verification in production
     # Try query call first (free, fast, works when key is already cached)
     result = unwrap(cksigner.getPublicKeyQuery(
         {"botName": bot_name}, verify_certificate=get_verify_certificates(),
     ))
     if "Err" in result:
-        # Cache miss — fall back to update call (may require fee payment)
-        log(f"  -> Cache miss, calling getPublicKey (update) to populate cache")
-        payment = _approve_fee_if_required(cksigner, wallet_agent)
-        result = unwrap(cksigner.getPublicKey(
-            {"botName": bot_name, "payment": payment},
-            verify_certificate=get_verify_certificates(),
-        ))
+        if query_only:
+            raise RuntimeError(
+                f"No public key cached for bot '{bot_name}'. "
+                f"The bot has not been used yet."
+            )
+        # Cache miss — fall back to update call (may require fee payment).
+        # Serialize approve+spend so concurrent threads don't race.
+        with _fee_payment_lock:
+            log(f"  -> Cache miss, calling getPublicKey (update) to populate cache")
+            payment = _approve_fee_if_required(cksigner, wallet_agent)
+            result = unwrap(cksigner.getPublicKey(
+                {"botName": bot_name, "payment": payment},
+                verify_certificate=get_verify_certificates(),
+            ))
         if "Err" in result:
             raise RuntimeError(f"getPublicKey failed: {result['Err']}")
     return result["Ok"]["publicKeyHex"], result["Ok"]["address"]

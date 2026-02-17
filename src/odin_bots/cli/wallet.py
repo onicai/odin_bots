@@ -38,6 +38,21 @@ def _pem_path() -> Path:
     return Path(_project_root()) / PEM_FILE
 
 
+def _backup_pem(pem: Path) -> Path:
+    """Move an existing PEM file to a numbered backup.
+
+    Picks the next available suffix: -backup-01, -backup-02, etc.
+    Returns the backup path.
+    """
+    for i in range(1, 100):
+        backup = pem.with_name(f"{pem.name}-backup-{i:02d}")
+        if not backup.exists():
+            pem.rename(backup)
+            print(f"Backed up existing wallet to {backup}")
+            return backup
+    raise RuntimeError("Too many PEM backups (max 99)")
+
+
 WITHDRAWALS_FILE = ".wallet/btc_withdrawals.json"
 
 MEMPOOL_TX_URL = "https://mempool.space/tx/"
@@ -138,6 +153,10 @@ def create(
     # Create .wallet/ directory
     wallet_dir = _wallet_dir()
     wallet_dir.mkdir(exist_ok=True)
+
+    # Back up existing PEM before overwriting
+    if pem.exists():
+        _backup_pem(pem)
 
     # Atomic-create with 0600 from the start (no race window with world-readable perms)
     fd = os.open(pem, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)

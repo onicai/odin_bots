@@ -9,6 +9,7 @@ from odin_bots.config import (
     CONFIG_FILENAME,
     PEM_FILE,
     _project_root,
+    add_bots_to_config,
     create_default_config,
     find_config,
     get_bot_description,
@@ -17,6 +18,7 @@ from odin_bots.config import (
     get_cache_sessions,
     get_verify_certificates,
     load_config,
+    remove_bots_from_config,
     require_wallet,
     validate_bot_name,
 )
@@ -128,6 +130,108 @@ class TestCreateDefaultConfig:
     def test_includes_verify_certificates(self):
         content = create_default_config()
         assert "verify_certificates = false" in content
+
+    def test_default_is_three_bots(self):
+        content = create_default_config()
+        assert "[bots.bot-3]" in content
+        assert "[bots.bot-4]" not in content
+
+    def test_one_bot(self):
+        content = create_default_config(num_bots=1)
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" not in content
+
+    def test_five_bots(self):
+        content = create_default_config(num_bots=5)
+        for i in range(1, 6):
+            assert f"[bots.bot-{i}]" in content
+            assert f'description = "Bot {i}"' in content
+        assert "[bots.bot-6]" not in content
+
+    def test_ten_bots(self):
+        content = create_default_config(num_bots=10)
+        for i in range(1, 11):
+            assert f"[bots.bot-{i}]" in content
+        assert "[bots.bot-11]" not in content
+
+    def test_zero_clamped_to_one(self):
+        content = create_default_config(num_bots=0)
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" not in content
+
+    def test_negative_clamped_to_one(self):
+        content = create_default_config(num_bots=-5)
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" not in content
+
+    def test_over_thousand_clamped(self):
+        content = create_default_config(num_bots=1500)
+        assert "[bots.bot-1000]" in content
+        assert "[bots.bot-1001]" not in content
+
+    def test_header_always_present(self):
+        content = create_default_config(num_bots=1)
+        assert "[settings]" in content
+        assert "cache_sessions = true" in content
+        assert 'default_persona = "iconfucius"' in content
+        assert "# [ai]" in content
+
+
+class TestAddBotsToConfig:
+    """Tests for add_bots_to_config()."""
+
+    def test_adds_new_bots(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        (tmp_path / CONFIG_FILENAME).write_text(create_default_config(num_bots=3))
+        added = add_bots_to_config(3, 6)
+        assert added == ["bot-4", "bot-5", "bot-6"]
+        content = (tmp_path / CONFIG_FILENAME).read_text()
+        for i in range(1, 7):
+            assert f"[bots.bot-{i}]" in content
+        assert "[bots.bot-7]" not in content
+
+    def test_returns_empty_when_nothing_to_add(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        (tmp_path / CONFIG_FILENAME).write_text(create_default_config(num_bots=3))
+        added = add_bots_to_config(3, 3)
+        assert added == []
+
+
+class TestRemoveBotsFromConfig:
+    """Tests for remove_bots_from_config()."""
+
+    def test_removes_specified_bots(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        (tmp_path / CONFIG_FILENAME).write_text(create_default_config(num_bots=5))
+        remove_bots_from_config(["bot-4", "bot-5"])
+        content = (tmp_path / CONFIG_FILENAME).read_text()
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-3]" in content
+        assert "[bots.bot-4]" not in content
+        assert "[bots.bot-5]" not in content
+
+    def test_removes_middle_bot(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        (tmp_path / CONFIG_FILENAME).write_text(create_default_config(num_bots=5))
+        remove_bots_from_config(["bot-3"])
+        content = (tmp_path / CONFIG_FILENAME).read_text()
+        assert "[bots.bot-2]" in content
+        assert "[bots.bot-3]" not in content
+        assert "[bots.bot-4]" in content
+
+    def test_removes_all_bots_except_one(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        (tmp_path / CONFIG_FILENAME).write_text(create_default_config(num_bots=3))
+        remove_bots_from_config(["bot-2", "bot-3"])
+        content = (tmp_path / CONFIG_FILENAME).read_text()
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" not in content
+        assert "[settings]" in content
 
 
 class TestGetVerifyCertificates:

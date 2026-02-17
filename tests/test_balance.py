@@ -275,7 +275,9 @@ class TestCollectBalances:
     @patch("odin_bots.cli.balance.Identity")
     @patch("odin_bots.cli.balance.siwb_login")
     @patch("odin_bots.cli.balance.load_session", return_value=None)
-    def test_falls_back_to_siwb_login(self, mock_load, mock_login,
+    @patch("odin_bots.siwb.bot_has_public_key", return_value=True)
+    def test_falls_back_to_siwb_login(self, mock_has_key, mock_load,
+                                       mock_login,
                                        MockId, MockClient, MockAgent,
                                        MockCanister, mock_cffi,
                                        mock_siwb_auth):

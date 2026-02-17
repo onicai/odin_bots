@@ -26,7 +26,11 @@ TR = "odin_bots.transfers"
 
 class TestHelpOutput:
     @patch("odin_bots.cli.chat.run_chat")
-    def test_no_args_starts_chat(self, mock_run_chat):
+    @patch("odin_bots.skills.executor.execute_tool", return_value={
+        "status": "ok", "config_exists": True, "wallet_exists": True,
+        "env_exists": True, "has_api_key": True, "ready": True,
+    })
+    def test_no_args_starts_chat(self, mock_exec, mock_run_chat):
         result = runner.invoke(app, [])
         assert result.exit_code == 0
         mock_run_chat.assert_called_once()
@@ -173,6 +177,37 @@ class TestInitCommand:
         assert "[bots.bot-1]" in content
         assert "[bots.bot-2]" in content
         assert "[bots.bot-3]" in content
+
+    def test_bots_flag_one(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        result = runner.invoke(app, ["init", "--bots", "1"])
+        assert result.exit_code == 0
+        content = (tmp_path / "odin-bots.toml").read_text()
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" not in content
+        assert "bot-1" in result.output
+
+    def test_bots_flag_five(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        result = runner.invoke(app, ["init", "--bots", "5"])
+        assert result.exit_code == 0
+        content = (tmp_path / "odin-bots.toml").read_text()
+        for i in range(1, 6):
+            assert f"[bots.bot-{i}]" in content
+        assert "[bots.bot-6]" not in content
+        assert "bot-5" in result.output
+
+    def test_bots_short_flag(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ODIN_BOTS_ROOT", str(tmp_path))
+        result = runner.invoke(app, ["init", "-n", "2"])
+        assert result.exit_code == 0
+        content = (tmp_path / "odin-bots.toml").read_text()
+        assert "[bots.bot-1]" in content
+        assert "[bots.bot-2]" in content
+        assert "[bots.bot-3]" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -810,3 +845,379 @@ class TestOptionPlacement:
         assert result.exit_code == 0
         args = mock_run.call_args
         assert set(args.kwargs["bot_names"]) == {"bot-1", "bot-2", "bot-3"}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding wizard (_start_chat)
+# ---------------------------------------------------------------------------
+
+class TestStartChatWizard:
+    """Tests for the interactive setup wizard in _start_chat().
+
+    Wizard order: init → API key → wallet create → show address → chat.
+    """
+
+    def _ready_status(self):
+        return {
+            "status": "ok", "config_exists": True, "wallet_exists": True,
+            "env_exists": True, "has_api_key": True, "ready": True,
+        }
+
+    def _no_config_status(self):
+        return {
+            "status": "ok", "config_exists": False, "wallet_exists": False,
+            "env_exists": False, "has_api_key": False, "ready": False,
+        }
+
+    def _after_init_status(self):
+        """After init: config exists, but no API key and no wallet yet."""
+        return {
+            "status": "ok", "config_exists": True, "wallet_exists": False,
+            "env_exists": True, "has_api_key": False, "ready": False,
+        }
+
+    def _no_wallet_status(self):
+        return {
+            "status": "ok", "config_exists": True, "wallet_exists": False,
+            "env_exists": True, "has_api_key": True, "ready": False,
+        }
+
+    def _no_api_key_status(self):
+        return {
+            "status": "ok", "config_exists": True, "wallet_exists": True,
+            "env_exists": True, "has_api_key": False, "ready": False,
+        }
+
+    def _wallet_receive_result(self):
+        return {
+            "status": "ok",
+            "wallet_principal": "abc-principal",
+            "btc_deposit_address": "bc1qtest123",
+            "ckbtc_balance_sats": 0,
+            "balance_display": "0 sats",
+        }
+
+    # --- Config init prompts ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["n"])
+    def test_decline_init_exits(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_config_status()
+        result = runner.invoke(app, [])
+        assert result.exit_code == 0
+        assert "odin-bots init" in result.output
+        mock_chat.assert_not_called()
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=KeyboardInterrupt)
+    def test_ctrl_c_during_init_prompt(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_config_status()
+        result = runner.invoke(app, [])
+        mock_chat.assert_not_called()
+
+    # --- Bot count prompt ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", "5"])
+    def test_custom_bot_count(self, mock_input, mock_exec, mock_chat):
+        """User enters 5 for bot count."""
+        calls = []
+
+        def track_exec(name, args):
+            calls.append((name, args))
+            if name == "setup_status" and not _calls_with(calls, "init"):
+                return self._no_config_status()
+            if name == "init":
+                return {"status": "ok", "display": "Created odin-bots.toml"}
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        init_calls = [(n, a) for n, a in calls if n == "init"]
+        assert len(init_calls) == 1
+        assert init_calls[0][1] == {"num_bots": 5}
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", ""])
+    def test_empty_bot_count_defaults_to_three(self, mock_input, mock_exec, mock_chat):
+        """Pressing Enter at bot count prompt uses default of 3."""
+        calls = []
+
+        def track_exec(name, args):
+            calls.append((name, args))
+            if name == "setup_status" and not _calls_with(calls, "init"):
+                return self._no_config_status()
+            if name == "init":
+                return {"status": "ok", "display": "Created odin-bots.toml"}
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        init_calls = [(n, a) for n, a in calls if n == "init"]
+        assert init_calls[0][1] == {"num_bots": 3}
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", "abc"])
+    def test_invalid_bot_count_uses_default(self, mock_input, mock_exec, mock_chat):
+        calls = []
+
+        def track_exec(name, args):
+            calls.append((name, args))
+            if name == "setup_status" and not _calls_with(calls, "init"):
+                return self._no_config_status()
+            if name == "init":
+                return {"status": "ok", "display": "Created odin-bots.toml"}
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        assert "Invalid number" in result.output
+        init_calls = [(n, a) for n, a in calls if n == "init"]
+        assert init_calls[0][1] == {"num_bots": 3}
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", KeyboardInterrupt])
+    def test_ctrl_c_during_bot_count(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_config_status()
+        result = runner.invoke(app, [])
+        mock_chat.assert_not_called()
+
+    # --- Init output ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", "3"])
+    def test_init_shows_clean_message(self, mock_input, mock_exec, mock_chat):
+        """Wizard prints its own message, not the raw CLI output."""
+        calls = []
+
+        def track_exec(name, args):
+            calls.append((name, args))
+            if name == "setup_status" and not _calls_with(calls, "init"):
+                return self._no_config_status()
+            if name == "init":
+                return {"status": "ok", "display": "lots of CLI output"}
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        assert "Created project with 3 bot(s): bot-1, bot-2, bot-3" in result.output
+        # Raw CLI output should NOT appear
+        assert "lots of CLI output" not in result.output
+
+    # --- API key prompt (asked BEFORE wallet) ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-test-key-123"])
+    def test_api_key_prompt_saves_to_env(self, mock_input, mock_exec, mock_chat,
+                                         tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_exec.return_value = self._no_api_key_status()
+
+        env_path = tmp_path / ".env"
+        env_path.write_text("ANTHROPIC_API_KEY=your-api-key-here\n")
+
+        result = runner.invoke(app, [])
+        content = env_path.read_text()
+        assert "sk-ant-test-key-123" in content
+        assert "your-api-key-here" not in content
+        assert "Saved API key" in result.output
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-my-key"])
+    def test_api_key_creates_env_if_missing(self, mock_input, mock_exec, mock_chat,
+                                             tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_exec.return_value = self._no_api_key_status()
+
+        env_path = tmp_path / ".env"
+        assert not env_path.exists()
+
+        result = runner.invoke(app, [])
+        assert env_path.exists()
+        assert env_path.read_text() == "ANTHROPIC_API_KEY=sk-ant-my-key\n"
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-new-key"])
+    def test_api_key_replaces_existing_value(self, mock_input, mock_exec, mock_chat,
+                                              tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_exec.return_value = self._no_api_key_status()
+
+        env_path = tmp_path / ".env"
+        env_path.write_text("OTHER_VAR=hello\nANTHROPIC_API_KEY=old-key\n")
+
+        result = runner.invoke(app, [])
+        content = env_path.read_text()
+        assert "ANTHROPIC_API_KEY=sk-ant-new-key" in content
+        assert "OTHER_VAR=hello" in content
+        assert "old-key" not in content
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-appended"])
+    def test_api_key_appends_to_env_without_key(self, mock_input, mock_exec, mock_chat,
+                                                 tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_exec.return_value = self._no_api_key_status()
+
+        env_path = tmp_path / ".env"
+        env_path.write_text("OTHER_VAR=hello\n")
+
+        result = runner.invoke(app, [])
+        content = env_path.read_text()
+        assert "OTHER_VAR=hello" in content
+        assert "ANTHROPIC_API_KEY=sk-ant-appended" in content
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=[""])
+    def test_empty_api_key_exits(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_api_key_status()
+        result = runner.invoke(app, [])
+        assert "No key entered" in result.output
+        mock_chat.assert_not_called()
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=KeyboardInterrupt)
+    def test_ctrl_c_during_api_key_prompt(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_api_key_status()
+        result = runner.invoke(app, [])
+        mock_chat.assert_not_called()
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-key"])
+    def test_api_key_sets_environ(self, mock_input, mock_exec, mock_chat,
+                                   tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        mock_exec.return_value = self._no_api_key_status()
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        result = runner.invoke(app, [])
+        assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-key"
+
+    # --- Wallet create prompts (asked AFTER API key) ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["n"])
+    def test_decline_wallet_create_exits(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_wallet_status()
+        result = runner.invoke(app, [])
+        assert "odin-bots wallet create" in result.output
+        mock_chat.assert_not_called()
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=KeyboardInterrupt)
+    def test_ctrl_c_during_wallet_prompt(self, mock_input, mock_exec, mock_chat):
+        mock_exec.return_value = self._no_wallet_status()
+        result = runner.invoke(app, [])
+        mock_chat.assert_not_called()
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y"])
+    def test_wallet_create_shows_address(self, mock_input, mock_exec, mock_chat):
+        """After wallet creation, wizard shows principal and deposit address."""
+        calls = []
+
+        def track_exec(name, args):
+            calls.append((name, args))
+            if name == "setup_status" and not _calls_with(calls, "wallet_create"):
+                return self._no_wallet_status()
+            if name == "wallet_create":
+                return {"status": "ok", "display": "Wallet created"}
+            if name == "wallet_receive":
+                return self._wallet_receive_result()
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        assert "Wallet created." in result.output
+        assert "abc-principal" in result.output
+        assert "bc1qtest123" in result.output
+        assert "send ckBTC or BTC" in result.output
+
+    # --- Full wizard flow ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["y", "2", "sk-ant-full-flow", "y"])
+    def test_full_wizard_flow(self, mock_input, mock_exec, mock_chat,
+                               tmp_path, monkeypatch):
+        """Full flow: init → API key → wallet → chat."""
+        monkeypatch.chdir(tmp_path)
+        step = {"n": 0}  # track wizard progression
+
+        def track_exec(name, args):
+            if name == "setup_status":
+                if step["n"] == 0:
+                    return self._no_config_status()
+                if step["n"] == 1:
+                    return self._after_init_status()
+                return self._ready_status()
+            if name == "init":
+                step["n"] = 1
+                return {"status": "ok", "display": "done"}
+            if name == "wallet_create":
+                step["n"] = 2
+                return {"status": "ok", "display": "done"}
+            if name == "wallet_receive":
+                return self._wallet_receive_result()
+            return {"status": "ok"}
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        # Verify wizard reached chat
+        mock_chat.assert_called_once()
+        # Verify all prompts were consumed
+        assert "Created project with 2 bot(s)" in result.output
+
+    # --- Wizard order: API key before wallet ---
+
+    @patch("odin_bots.cli.chat.run_chat")
+    @patch("odin_bots.skills.executor.execute_tool")
+    @patch("builtins.input", side_effect=["sk-ant-key", "y"])
+    def test_api_key_asked_before_wallet(self, mock_input, mock_exec, mock_chat,
+                                          tmp_path, monkeypatch):
+        """When both API key and wallet are missing, API key is asked first."""
+        monkeypatch.chdir(tmp_path)
+        calls = []
+
+        def track_exec(name, args):
+            calls.append(name)
+            if name == "setup_status" and "wallet_create" not in calls:
+                # Config exists, but no API key and no wallet
+                return {
+                    "status": "ok", "config_exists": True, "wallet_exists": False,
+                    "env_exists": True, "has_api_key": False, "ready": False,
+                }
+            if name == "wallet_create":
+                return {"status": "ok", "display": "done"}
+            if name == "wallet_receive":
+                return self._wallet_receive_result()
+            return self._ready_status()
+
+        mock_exec.side_effect = track_exec
+        result = runner.invoke(app, [])
+        # API key prompt comes first (consumed "sk-ant-key"),
+        # then wallet prompt (consumed "y")
+        assert "Saved API key" in result.output
+        assert "Wallet created." in result.output
+
+
+def _calls_with(calls, name):
+    """Helper: return calls matching a tool name."""
+    return [c for c in calls if c[0] == name]

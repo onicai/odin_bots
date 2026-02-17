@@ -57,7 +57,7 @@ class TestRunFundSuccess:
         run_fund(bot_names=["bot-1"], amount=5000, verbose=False)
 
         output = capsys.readouterr().out
-        assert "bot-1...done" in output.replace(" ", "")
+        assert "bot-1: done" in output
         assert "Funded 1 bot(s) successfully" in output
         mock_transfer.assert_called_once()
         mock_ckbtc.icrc2_approve.assert_called_once()
