@@ -72,7 +72,7 @@ include = ["odin_bots*"]
 exclude = ["canisters*"]
 
 [tool.setuptools.package-data]
-odin_bots = ["py.typed", "personas/**/*.toml", "personas/**/*.md"]
+odin_bots = ["py.typed", "*.toml", "personas/**/*.toml", "personas/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

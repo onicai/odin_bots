@@ -1,6 +1,7 @@
 """Interactive chat command for trading personas."""
 
 import itertools
+import json
 import locale
 import random
 import sys
@@ -10,6 +11,8 @@ import time
 from odin_bots.ai import APIKeyMissingError, create_backend
 from odin_bots.memory import read_strategy, read_trades
 from odin_bots.persona import Persona, PersonaNotFoundError, load_persona
+from odin_bots.skills.definitions import get_tool_metadata, get_tools_for_anthropic
+from odin_bots.skills.executor import execute_tool
 
 # Topics and icons for IConfucius startup quotes (from IConfucius agent)
 QUOTE_TOPICS = [
@@ -195,6 +198,123 @@ def _generate_startup(backend, persona, lang: str) -> tuple[str, str]:
     return greeting, goodbye
 
 
+_MAX_TOOL_ITERATIONS = 10
+
+
+def _describe_tool_call(name: str, tool_input: dict) -> str:
+    """Return a human-readable description of a tool call for confirmation."""
+    if name == "fund":
+        return f"Fund {tool_input.get('bot_name')} with {tool_input.get('amount'):,} sats"
+    if name == "trade_buy":
+        return (
+            f"Buy {tool_input.get('amount'):,} sats of token "
+            f"{tool_input.get('token_id')} via {tool_input.get('bot_name')}"
+        )
+    if name == "trade_sell":
+        return (
+            f"Sell {tool_input.get('amount')} of token "
+            f"{tool_input.get('token_id')} via {tool_input.get('bot_name')}"
+        )
+    if name == "withdraw":
+        return (
+            f"Withdraw {tool_input.get('amount')} sats from "
+            f"{tool_input.get('bot_name')}"
+        )
+    if name == "wallet_send":
+        return (
+            f"Send {tool_input.get('amount')} sats to "
+            f"{tool_input.get('address')}"
+        )
+    return f"{name}({json.dumps(tool_input)})"
+
+
+def _run_tool_loop(backend, messages: list[dict], system: str,
+                   tools: list[dict], persona_name: str) -> None:
+    """Run the tool use loop until a text-only response is produced.
+
+    Modifies messages in-place (appends assistant + tool_result messages).
+    """
+    for _ in range(_MAX_TOOL_ITERATIONS):
+        response = backend.chat_with_tools(messages, system, tools)
+
+        # Check if response has any tool_use blocks
+        has_tool_use = any(
+            block.type == "tool_use" for block in response.content
+        )
+
+        if not has_tool_use:
+            # Text-only response — extract and print
+            text = "".join(
+                block.text for block in response.content
+                if block.type == "text"
+            )
+            messages.append({"role": "assistant", "content": text})
+            print(f"\n{persona_name}: {text}\n")
+            return
+
+        # Has tool calls — process them
+        # Add the full assistant response to messages
+        messages.append({
+            "role": "assistant",
+            "content": [_block_to_dict(b) for b in response.content],
+        })
+
+        # Print any text blocks (persona's reasoning before tool calls)
+        for block in response.content:
+            if block.type == "text" and block.text.strip():
+                print(f"\n{persona_name}: {block.text}")
+
+        # Execute each tool call
+        tool_results = []
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
+
+            meta = get_tool_metadata(block.name)
+            needs_confirm = meta and meta.get("requires_confirmation", False)
+
+            if needs_confirm:
+                desc = _describe_tool_call(block.name, block.input)
+                try:
+                    answer = input(f"\n  {desc} [y/N] ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    answer = "n"
+                if answer != "y":
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(
+                            {"status": "declined", "error": "User declined."}
+                        ),
+                    })
+                    continue
+
+            with _Spinner(f"Running {block.name}..."):
+                result = execute_tool(block.name, block.input)
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": json.dumps(result, default=str),
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
+
+def _block_to_dict(block) -> dict:
+    """Convert an Anthropic content block to a plain dict for messages."""
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    if block.type == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
+    return {"type": block.type}
+
+
 def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
     """Run interactive chat with a trading persona.
 
@@ -228,6 +348,14 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
     if recent_trades:
         system += f"\n\n## Recent Trades\n{recent_trades}"
 
+    # Inject known tokens for name→ID resolution
+    from odin_bots.tokens import format_known_tokens_for_prompt
+
+    known_tokens_table = format_known_tokens_for_prompt()
+    if known_tokens_table:
+        system += f"\n\n## Known Tokens\n{known_tokens_table}"
+        system += "\nUse these token IDs directly. For unknown tokens, use token_lookup."
+
     system += f"\n\nYou are trading as bot '{bot_name}'."
 
     # Verify API access with a startup greeting (also caches goodbye)
@@ -242,17 +370,19 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
     print(f"\n{persona.name}:\n{greeting}\n")
     print("\033[2mexit to quit · Ctrl+C to interrupt\033[0m\n")
 
+    tools = get_tools_for_anthropic()
     messages: list[dict] = []
 
     while True:
         try:
+            print("\033[2m" + "─" * 60 + "\033[0m")
             user_input = input("You: ").strip()
         except (KeyboardInterrupt, EOFError):
-            print(f"\n{persona.name}: {goodbye}")
+            print(f"\n\n{persona.name}: {goodbye}")
             break
 
         if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
-            print(f"{persona.name}: {goodbye}")
+            print(f"\n{persona.name}: {goodbye}")
             break
 
         if not user_input:
@@ -261,11 +391,8 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
         messages.append({"role": "user", "content": user_input})
 
         try:
-            response = backend.chat(messages, system=system)
+            _run_tool_loop(backend, messages, system, tools, persona.name)
         except Exception as e:
             print(f"\n{_format_api_error(e)}\n")
-            messages.pop()  # Remove the failed message
+            messages.pop()  # Remove the failed user message
             continue
-
-        messages.append({"role": "assistant", "content": response})
-        print(f"\n{persona.name}: {response}\n")

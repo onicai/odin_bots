@@ -7,10 +7,14 @@ from typer.testing import CliRunner
 import odin_bots.config as cfg
 from odin_bots.cli import app
 from odin_bots.cli.chat import (
+    _block_to_dict,
+    _describe_tool_call,
     _generate_startup,
     _get_language_code,
     _format_api_error,
+    _run_tool_loop,
     _Spinner,
+    _MAX_TOOL_ITERATIONS,
     QUOTE_TOPICS,
 )
 from odin_bots.persona import Persona
@@ -211,3 +215,139 @@ class TestSpinner:
         with _Spinner("testing..."):
             time.sleep(0.1)
         # If we get here, the spinner cleaned up properly
+
+
+# ---------------------------------------------------------------------------
+# Tool use helpers
+# ---------------------------------------------------------------------------
+
+class TestDescribeToolCall:
+    def test_fund(self):
+        desc = _describe_tool_call("fund", {"bot_name": "bot-1", "amount": 5000})
+        assert "bot-1" in desc
+        assert "5,000" in desc
+
+    def test_trade_buy(self):
+        desc = _describe_tool_call(
+            "trade_buy",
+            {"token_id": "29m8", "amount": 1000, "bot_name": "bot-1"},
+        )
+        assert "29m8" in desc
+        assert "1,000" in desc
+        assert "bot-1" in desc
+
+    def test_trade_sell(self):
+        desc = _describe_tool_call(
+            "trade_sell",
+            {"token_id": "29m8", "amount": "all", "bot_name": "bot-1"},
+        )
+        assert "29m8" in desc
+        assert "all" in desc
+
+    def test_withdraw(self):
+        desc = _describe_tool_call(
+            "withdraw", {"amount": "5000", "bot_name": "bot-1"}
+        )
+        assert "bot-1" in desc
+
+    def test_wallet_send(self):
+        desc = _describe_tool_call(
+            "wallet_send", {"amount": "1000", "address": "bc1qtest"}
+        )
+        assert "bc1qtest" in desc
+
+    def test_unknown_tool_fallback(self):
+        desc = _describe_tool_call("something", {"a": 1})
+        assert "something" in desc
+
+
+class TestBlockToDict:
+    def test_text_block(self):
+        block = MagicMock()
+        block.type = "text"
+        block.text = "Hello"
+        result = _block_to_dict(block)
+        assert result == {"type": "text", "text": "Hello"}
+
+    def test_tool_use_block(self):
+        block = MagicMock()
+        block.type = "tool_use"
+        block.id = "id_123"
+        block.name = "wallet_balance"
+        block.input = {"all_bots": True}
+        result = _block_to_dict(block)
+        assert result["type"] == "tool_use"
+        assert result["id"] == "id_123"
+        assert result["name"] == "wallet_balance"
+        assert result["input"] == {"all_bots": True}
+
+
+class TestRunToolLoop:
+    def test_text_only_response(self):
+        """Text-only response prints and returns."""
+        backend = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Here is your answer."
+        response = MagicMock()
+        response.content = [text_block]
+        backend.chat_with_tools.return_value = response
+
+        messages = []
+        _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # Should have added assistant message
+        assert len(messages) == 1
+        assert messages[0]["role"] == "assistant"
+        assert messages[0]["content"] == "Here is your answer."
+
+    def test_tool_call_then_text(self):
+        """Tool call followed by text response."""
+        backend = MagicMock()
+
+        # First response: tool call
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "id_1"
+        tool_block.name = "persona_list"
+        tool_block.input = {}
+        resp1 = MagicMock()
+        resp1.content = [tool_block]
+
+        # Second response: text only
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Available personas: iconfucius"
+        resp2 = MagicMock()
+        resp2.content = [text_block]
+
+        backend.chat_with_tools.side_effect = [resp1, resp2]
+
+        messages = []
+        _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # Should have: assistant (tool_use), user (tool_result), assistant (text)
+        assert len(messages) == 3
+        assert messages[0]["role"] == "assistant"
+        assert messages[1]["role"] == "user"
+        assert messages[2]["role"] == "assistant"
+
+    def test_max_iterations_guard(self):
+        """Loop stops after MAX_TOOL_ITERATIONS."""
+        backend = MagicMock()
+
+        # Always return a tool call
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "id_loop"
+        tool_block.name = "persona_list"
+        tool_block.input = {}
+        response = MagicMock()
+        response.content = [tool_block]
+        backend.chat_with_tools.return_value = response
+
+        messages = []
+        _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # Should have called chat_with_tools exactly MAX_TOOL_ITERATIONS times
+        assert backend.chat_with_tools.call_count == _MAX_TOOL_ITERATIONS
