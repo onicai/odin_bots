@@ -166,6 +166,7 @@ def collect_balances(bot_name: str, token_id: str = "29m8",
                 "ticker": ticker,
                 "token_id": token_id,
                 "balance": balance,
+                "divisibility": divisibility,
                 "value_sats": value_sats,
             })
     except Exception:
@@ -191,6 +192,23 @@ def _fetch_btc_usd_rate() -> float | None:
         print(f"BTC/USD rate: Could not fetch ({e})")
         return None
 
+
+
+def _fmt_token_amount(raw_balance: int, divisibility: int) -> str:
+    """Format a raw token balance adjusted for divisibility.
+
+    Example: raw_balance=2_771_411_893_677_396, divisibility=8
+             -> '27,714,118.94'
+    """
+    if divisibility <= 0:
+        return f"{raw_balance:,}"
+    adjusted = raw_balance / (10 ** divisibility)
+    # Show 2 decimal places; use more if the amount is tiny
+    if adjusted == 0:
+        return "0"
+    if abs(adjusted) < 0.01:
+        return f"{adjusted:,.{divisibility}f}".rstrip("0").rstrip(".")
+    return f"{adjusted:,.2f}"
 
 
 def _print_padded_table(headers, rows):
@@ -661,6 +679,7 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
     rows = []
     total_odin_sats = 0
     total_token_balances = {ticker: 0 for ticker in all_tickers}
+    total_token_divisibility = {ticker: 0 for ticker in all_tickers}
     total_token_value_sats = {ticker: 0.0 for ticker in all_tickers}
 
     for d in all_data:
@@ -675,12 +694,15 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
             if ticker in token_map:
                 t = token_map[ticker]
                 total_token_balances[ticker] += t["balance"]
+                div = t.get("divisibility", 8)
+                total_token_divisibility[ticker] = div
                 total_token_value_sats[ticker] += t.get("value_sats", 0)
+                display_bal = _fmt_token_amount(t["balance"], div)
                 if btc_usd_rate and t.get("value_sats", 0):
                     usd = (t["value_sats"] / 100_000_000) * btc_usd_rate
-                    row.append(f"{t['balance']:,} (${usd:.2f})")
+                    row.append(f"{display_bal} (${usd:.2f})")
                 else:
-                    row.append(f"{t['balance']:,}")
+                    row.append(display_bal)
             else:
                 row.append("0")
         rows.append(tuple(row))
@@ -691,13 +713,15 @@ def _print_holdings_table(all_data: list, btc_usd_rate: float | None,
         total_usd = (total_odin_sats / 100_000_000) * btc_usd_rate if btc_usd_rate else 0
         for ticker in all_tickers:
             bal = total_token_balances[ticker]
+            div = total_token_divisibility[ticker]
             vs = total_token_value_sats[ticker]
+            display_bal = _fmt_token_amount(bal, div)
             if btc_usd_rate and vs:
                 usd = (vs / 100_000_000) * btc_usd_rate
                 total_usd += usd
-                total_row.append(f"{bal:,} (${usd:.2f})")
+                total_row.append(f"{display_bal} (${usd:.2f})")
             else:
-                total_row.append(f"{bal:,}")
+                total_row.append(display_bal)
         rows.append(tuple(total_row))
 
     print()

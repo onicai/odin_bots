@@ -96,7 +96,9 @@ def write_toml(tokens: list[dict]) -> None:
         name = t.get("name", "").replace('"', '\\"')
         ticker = t.get("ticker", "").replace('"', '\\"')
         marketcap = t.get("marketcap", 0)
-
+        holder_count = t.get("holder_count", 0)
+        bonded = t.get("bonded", False)
+        twitter_verified = t.get("twitter_verified", False)
         created_time = t.get("created_time", "")
 
         lines.append(f"[tokens.{token_id}]")
@@ -104,6 +106,9 @@ def write_toml(tokens: list[dict]) -> None:
         lines.append(f'ticker = "{ticker}"')
         lines.append(f"marketcap = {marketcap}")
         lines.append(f'marketcap_date = "{today}"')
+        lines.append(f"holder_count = {holder_count}")
+        lines.append(f"bonded = {'true' if bonded else 'false'}")
+        lines.append(f"twitter_verified = {'true' if twitter_verified else 'false'}")
         lines.append(f'created_time = "{created_time}"')
         lines.append("")
 

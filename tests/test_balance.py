@@ -7,6 +7,7 @@ import pytest
 
 from odin_bots.cli.balance import (
     BotBalances,
+    _fmt_token_amount,
     _print_padded_table,
     _print_holdings_table,
     _print_wallet_info,
@@ -34,6 +35,41 @@ class TestSatsStr:
         result = fmt_sats(0, 100_000.0)
         assert "0 sats" in result
         assert "$0.00" in result
+
+
+# ---------------------------------------------------------------------------
+# _fmt_token_amount
+# ---------------------------------------------------------------------------
+
+class TestFmtTokenAmount:
+    def test_divisibility_8_large_balance(self):
+        """Regression: raw balance 2_771_411_893_677_396 with div=8 should
+        display as ~27,714,118.94 — NOT as 2,771,411,893,677,396."""
+        result = _fmt_token_amount(2_771_411_893_677_396, 8)
+        assert result == "27,714,118.94"
+        # Must NOT contain the raw 15+ digit number
+        assert "2,771,411,893,677,396" not in result
+
+    def test_divisibility_8_small_balance(self):
+        result = _fmt_token_amount(100, 8)
+        # 100 / 10^8 = 0.000001
+        assert "0.000001" in result
+
+    def test_divisibility_0(self):
+        result = _fmt_token_amount(1_234_567, 0)
+        assert result == "1,234,567"
+
+    def test_zero_balance(self):
+        assert _fmt_token_amount(0, 8) == "0"
+
+    def test_divisibility_2(self):
+        result = _fmt_token_amount(12345, 2)
+        assert result == "123.45"
+
+    def test_tiny_amount_shows_more_decimals(self):
+        # 1 / 10^8 = 0.00000001 — less than 0.01, so full precision
+        result = _fmt_token_amount(1, 8)
+        assert "0.00000001" in result
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +108,7 @@ class TestBotBalances:
 
     def test_with_holdings(self):
         holdings = [{"ticker": "ICONFUCIUS", "token_id": "29m8",
-                     "balance": 1000, "value_sats": 50}]
+                     "balance": 1000, "divisibility": 8, "value_sats": 50}]
         data = BotBalances(bot_name="bot-1", bot_principal="abc",
                            odin_sats=5000.0, token_holdings=holdings)
         assert data.odin_sats == 5000.0
@@ -95,31 +131,34 @@ class TestPrintHoldingsTable:
         data = [BotBalances("bot-1", "abc", odin_sats=5000.0,
                             token_holdings=[
                                 {"ticker": "TEST", "token_id": "t1",
-                                 "balance": 500, "value_sats": 100}
+                                 "balance": 50_000_000_000, "divisibility": 8,
+                                 "value_sats": 100}
                             ])]
         _print_holdings_table(data, btc_usd_rate=100_000.0)
         output = capsys.readouterr().out
         assert "TEST (t1)" in output
-        assert "500" in output
+        assert "500.00" in output
 
     def test_multi_bot_shows_totals(self, capsys):
         data = [
             BotBalances("bot-1", "abc", odin_sats=3000.0,
                         token_holdings=[
                             {"ticker": "X", "token_id": "x1",
-                             "balance": 100, "value_sats": 10}
+                             "balance": 10_000_000_000, "divisibility": 8,
+                             "value_sats": 10}
                         ]),
             BotBalances("bot-2", "def", odin_sats=2000.0,
                         token_holdings=[
                             {"ticker": "X", "token_id": "x1",
-                             "balance": 200, "value_sats": 20}
+                             "balance": 20_000_000_000, "divisibility": 8,
+                             "value_sats": 20}
                         ]),
         ]
         _print_holdings_table(data, btc_usd_rate=100_000.0)
         output = capsys.readouterr().out
         assert "TOTAL" in output
         assert "5,000 sats" in output
-        assert "300" in output
+        assert "300.00" in output
         assert "Total portfolio value:" in output
 
     def test_no_totals_for_single_bot(self, capsys):
@@ -134,6 +173,26 @@ class TestPrintHoldingsTable:
         output = capsys.readouterr().out
         assert "1,000 sats" in output
         assert "$" not in output
+
+    def test_token_balance_adjusted_for_divisibility(self, capsys):
+        """Regression: raw balance must be divided by 10^divisibility.
+
+        Without the fix, 2_771_411_893_677_396 would display as
+        '2,771,411,893,677,396' instead of '27,714,118.94'.
+        """
+        data = [BotBalances("bot-1", "abc", odin_sats=1000.0,
+                            token_holdings=[
+                                {"ticker": "ICONFUCIUS", "token_id": "29m8",
+                                 "balance": 2_771_411_893_677_396,
+                                 "divisibility": 8,
+                                 "value_sats": 2200}
+                            ])]
+        _print_holdings_table(data, btc_usd_rate=100_000.0)
+        output = capsys.readouterr().out
+        # Should show the adjusted amount, not the raw integer
+        assert "27,714,118.94" in output
+        # Must NOT contain the raw 16-digit number
+        assert "2,771,411,893,677,396" not in output
 
 
 # ---------------------------------------------------------------------------

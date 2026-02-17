@@ -256,25 +256,19 @@ def _handle_wallet_balance(args: dict) -> dict:
         return {"status": "error", "error": "No wallet found. Run: odin-bots wallet create"}
 
     bot_name = args.get("bot_name")
-    all_bots = args.get("all_bots", False)
     ckbtc_minter = args.get("ckbtc_minter", False)
 
+    from odin_bots.cli.balance import run_all_balances
+
     if bot_name:
-        from odin_bots.cli.balance import run_all_balances
         output = _capture(run_all_balances, [bot_name],
                           ckbtc_minter=ckbtc_minter)
         return {"status": "ok", "display": output.strip()}
 
-    if all_bots:
-        from odin_bots.cli.balance import run_all_balances
-        bot_names = get_bot_names()
-        output = _capture(run_all_balances, bot_names,
-                          ckbtc_minter=ckbtc_minter)
-        return {"status": "ok", "display": output.strip()}
-
-    # Wallet only (no bot specified)
-    from odin_bots.cli.balance import run_wallet_balance
-    output = _capture(run_wallet_balance, ckbtc_minter=ckbtc_minter)
+    # Default: show all bots
+    bot_names = get_bot_names()
+    output = _capture(run_all_balances, bot_names,
+                      ckbtc_minter=ckbtc_minter)
     return {"status": "ok", "display": output.strip()}
 
 
@@ -726,29 +720,20 @@ def _handle_token_lookup(args: dict) -> dict:
         if km.get("bonded"):
             flags.append("bonded")
         if km.get("twitter_verified"):
-            flags.append("verified")
+            flags.append("Twitter verified")
         flags_str = ", ".join(flags) if flags else "unverified"
+        holders = km.get("holder_count")
+        holder_str = f", {holders:,} holders" if holders else ""
         lines.append(
             f"Known match: {km.get('name')} ({km.get('id')}) "
-            f"— {flags_str}, {km.get('holder_count', '?')} holders"
+            f"— {flags_str}{holder_str}"
         )
-    if search_results:
+    if not km and search_results:
+        # Only show search results when there's no known match
         lines.append("Search results:")
         for r in search_results:
-            flags = []
-            if r.get("bonded"):
-                flags.append("bonded")
-            if r.get("twitter_verified"):
-                flags.append("verified")
-            safety = r.get("safety", "")
-            if safety:
-                flags.append(safety)
-            flags_str = ", ".join(flags) if flags else "unverified"
-            lines.append(
-                f"  {r.get('name')} ({r.get('id')}) "
-                f"— {flags_str}, {r.get('holder_count', '?')} holders"
-            )
-    elif not km:
+            lines.append(f"  {r.get('name')} ({r.get('id')}) — {r.get('safety', '')}")
+    elif not km and not search_results:
         lines.append("No results found.")
 
     return {
@@ -764,6 +749,20 @@ def _handle_token_lookup(args: dict) -> dict:
 # State-changing handlers
 # ---------------------------------------------------------------------------
 
+def _resolve_bot_names(args: dict) -> list[str]:
+    """Resolve bot_name / bot_names / all_bots args into a list of bot names."""
+    if args.get("all_bots"):
+        from odin_bots.config import get_bot_names
+        return get_bot_names()
+    names = args.get("bot_names")
+    if names:
+        return list(names)
+    bot_name = args.get("bot_name")
+    if bot_name:
+        return [bot_name]
+    return []
+
+
 def _handle_fund(args: dict) -> dict:
     from odin_bots.config import require_wallet
 
@@ -771,12 +770,12 @@ def _handle_fund(args: dict) -> dict:
         return {"status": "error", "error": "No wallet found. Run: odin-bots wallet create"}
 
     amount = args.get("amount")
-    bot_name = args.get("bot_name")
-    if not amount or not bot_name:
-        return {"status": "error", "error": "Both 'amount' and 'bot_name' are required."}
+    bot_names = _resolve_bot_names(args)
+    if not amount or not bot_names:
+        return {"status": "error", "error": "'amount' and at least one bot are required."}
 
     from odin_bots.cli.fund import run_fund
-    output = _capture(run_fund, [bot_name], int(amount))
+    output = _capture(run_fund, bot_names, int(amount))
     return {"status": "ok", "display": output.strip()}
 
 
@@ -788,12 +787,23 @@ def _handle_trade_buy(args: dict) -> dict:
 
     token_id = args.get("token_id")
     amount = args.get("amount")
-    bot_name = args.get("bot_name")
-    if not all([token_id, amount, bot_name]):
-        return {"status": "error", "error": "'token_id', 'amount', and 'bot_name' are required."}
+    bot_names = _resolve_bot_names(args)
+    if not all([token_id, amount, bot_names]):
+        return {"status": "error", "error": "'token_id', 'amount', and at least one bot are required."}
 
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.trade import run_trade
-    output = _capture(run_trade, bot_name, "buy", token_id, str(amount))
+
+    def _do():
+        results = run_per_bot(
+            lambda name: run_trade(name, "buy", token_id, str(amount)),
+            bot_names,
+        )
+        for name, result in results:
+            if isinstance(result, Exception):
+                print(f"{name}: FAILED — {result}")
+
+    output = _capture(_do)
     return {"status": "ok", "display": output.strip()}
 
 
@@ -805,12 +815,23 @@ def _handle_trade_sell(args: dict) -> dict:
 
     token_id = args.get("token_id")
     amount = args.get("amount")
-    bot_name = args.get("bot_name")
-    if not all([token_id, amount, bot_name]):
-        return {"status": "error", "error": "'token_id', 'amount', and 'bot_name' are required."}
+    bot_names = _resolve_bot_names(args)
+    if not all([token_id, amount, bot_names]):
+        return {"status": "error", "error": "'token_id', 'amount', and at least one bot are required."}
 
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.trade import run_trade
-    output = _capture(run_trade, bot_name, "sell", token_id, str(amount))
+
+    def _do():
+        results = run_per_bot(
+            lambda name: run_trade(name, "sell", token_id, str(amount)),
+            bot_names,
+        )
+        for name, result in results:
+            if isinstance(result, Exception):
+                print(f"{name}: FAILED — {result}")
+
+    output = _capture(_do)
     return {"status": "ok", "display": output.strip()}
 
 
@@ -821,12 +842,23 @@ def _handle_withdraw(args: dict) -> dict:
         return {"status": "error", "error": "No wallet found. Run: odin-bots wallet create"}
 
     amount = args.get("amount")
-    bot_name = args.get("bot_name")
-    if not amount or not bot_name:
-        return {"status": "error", "error": "Both 'amount' and 'bot_name' are required."}
+    bot_names = _resolve_bot_names(args)
+    if not amount or not bot_names:
+        return {"status": "error", "error": "'amount' and at least one bot are required."}
 
+    from odin_bots.cli.concurrent import run_per_bot
     from odin_bots.cli.withdraw import run_withdraw
-    output = _capture(run_withdraw, bot_name, str(amount))
+
+    def _do():
+        results = run_per_bot(
+            lambda name: run_withdraw(name, str(amount)),
+            bot_names,
+        )
+        for name, result in results:
+            if isinstance(result, Exception):
+                print(f"{name}: FAILED — {result}")
+
+    output = _capture(_do)
     return {"status": "ok", "display": output.strip()}
 
 

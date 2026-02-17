@@ -8,7 +8,9 @@ import odin_bots.config as cfg
 from odin_bots.cli import app
 from odin_bots.cli.chat import (
     _block_to_dict,
+    _bot_target,
     _describe_tool_call,
+    _fmt_sats,
     _generate_startup,
     _get_language_code,
     _format_api_error,
@@ -229,11 +231,59 @@ class TestSpinner:
 # Tool use helpers
 # ---------------------------------------------------------------------------
 
+class TestFmtSats:
+    def test_normal_int(self):
+        assert _fmt_sats(5000) == "5,000"
+
+    def test_none_returns_question_mark(self):
+        assert _fmt_sats(None) == "?"
+
+    def test_string_passthrough(self):
+        assert _fmt_sats("all") == "all"
+
+
+class TestBotTarget:
+    def test_all_bots(self):
+        assert _bot_target({"all_bots": True}) == "all bots"
+
+    def test_bot_names_list(self):
+        result = _bot_target({"bot_names": ["bot-12", "bot-14"]})
+        assert "bot-12" in result
+        assert "bot-14" in result
+
+    def test_single_bot_name(self):
+        assert _bot_target({"bot_name": "bot-1"}) == "bot-1"
+
+    def test_none_returns_question_mark(self):
+        assert _bot_target({}) == "?"
+
+    def test_all_bots_takes_priority(self):
+        result = _bot_target({"all_bots": True, "bot_name": "bot-1"})
+        assert result == "all bots"
+
+    def test_bot_names_takes_priority_over_bot_name(self):
+        result = _bot_target({"bot_names": ["bot-2"], "bot_name": "bot-1"})
+        assert result == "bot-2"
+
+
 class TestDescribeToolCall:
     def test_fund(self):
         desc = _describe_tool_call("fund", {"bot_name": "bot-1", "amount": 5000})
         assert "bot-1" in desc
         assert "5,000" in desc
+
+    def test_fund_none_amount(self):
+        desc = _describe_tool_call("fund", {"bot_name": "bot-1", "amount": None})
+        assert "bot-1" in desc
+        assert "?" in desc
+
+    def test_trade_buy_none_amount(self):
+        desc = _describe_tool_call(
+            "trade_buy",
+            {"token_id": "29m8", "amount": None, "bot_name": "bot-1"},
+        )
+        assert "?" in desc
+        assert "bot-1" in desc
 
     def test_trade_buy(self):
         desc = _describe_tool_call(
@@ -264,9 +314,41 @@ class TestDescribeToolCall:
         )
         assert "bc1qtest" in desc
 
+    def test_fund_all_bots(self):
+        desc = _describe_tool_call("fund", {"all_bots": True, "amount": 5000})
+        assert "all bots" in desc
+        assert "5,000" in desc
+
+    def test_fund_bot_names_list(self):
+        desc = _describe_tool_call(
+            "fund",
+            {"bot_names": ["bot-12", "bot-14"], "amount": 20000},
+        )
+        assert "bot-12" in desc
+        assert "bot-14" in desc
+        assert "20,000" in desc
+
+    def test_trade_buy_all_bots(self):
+        desc = _describe_tool_call(
+            "trade_buy",
+            {"all_bots": True, "token_id": "29m8", "amount": 1000},
+        )
+        assert "all bots" in desc
+        assert "29m8" in desc
+
+    def test_withdraw_bot_names_list(self):
+        desc = _describe_tool_call(
+            "withdraw",
+            {"bot_names": ["bot-3", "bot-7"], "amount": "all"},
+        )
+        assert "bot-3" in desc
+        assert "bot-7" in desc
+
     def test_unknown_tool_fallback(self):
         desc = _describe_tool_call("something", {"a": 1})
         assert "something" in desc
+
+
 
 
 class TestBlockToDict:
@@ -339,6 +421,147 @@ class TestRunToolLoop:
         assert messages[0]["role"] == "assistant"
         assert messages[1]["role"] == "user"
         assert messages[2]["role"] == "assistant"
+
+    @patch("odin_bots.cli.chat.execute_tool", return_value={"status": "ok"})
+    @patch("odin_bots.cli.chat.get_tool_metadata",
+           return_value={"requires_confirmation": True})
+    def test_single_confirm_prompt(self, mock_meta, mock_exec):
+        """Single confirmable tool shows one [Y/n] prompt."""
+        backend = MagicMock()
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "id_fund1"
+        tool_block.name = "fund"
+        tool_block.input = {"bot_name": "bot-1", "amount": 5000}
+        resp1 = MagicMock()
+        resp1.content = [tool_block]
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Done."
+        resp2 = MagicMock()
+        resp2.content = [text_block]
+        backend.chat_with_tools.side_effect = [resp1, resp2]
+
+        with patch("builtins.input", return_value="y"):
+            messages = []
+            _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        mock_exec.assert_called_once()
+
+    @patch("odin_bots.cli.chat.execute_tool", return_value={"status": "ok"})
+    @patch("odin_bots.cli.chat.get_tool_metadata",
+           return_value={"requires_confirmation": True})
+    def test_batch_confirm_asks_once(self, mock_meta, mock_exec):
+        """Multiple confirmable tools in one response ask once."""
+        backend = MagicMock()
+
+        blocks = []
+        for i in range(3):
+            b = MagicMock()
+            b.type = "tool_use"
+            b.id = f"id_fund{i}"
+            b.name = "fund"
+            b.input = {"bot_name": f"bot-{i+1}", "amount": 5000}
+            blocks.append(b)
+        resp1 = MagicMock()
+        resp1.content = blocks
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Done."
+        resp2 = MagicMock()
+        resp2.content = [text_block]
+        backend.chat_with_tools.side_effect = [resp1, resp2]
+
+        with patch("builtins.input", return_value="y") as mock_input:
+            messages = []
+            _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # Only one input() call for the batch
+        mock_input.assert_called_once()
+        # All three tools executed
+        assert mock_exec.call_count == 3
+
+    @patch("odin_bots.cli.chat.execute_tool", return_value={"status": "ok"})
+    @patch("odin_bots.cli.chat.get_tool_metadata",
+           return_value={"requires_confirmation": True})
+    def test_batch_decline_skips_all(self, mock_meta, mock_exec):
+        """Declining batch confirmation skips all confirmable tools."""
+        backend = MagicMock()
+
+        blocks = []
+        for i in range(3):
+            b = MagicMock()
+            b.type = "tool_use"
+            b.id = f"id_fund{i}"
+            b.name = "fund"
+            b.input = {"bot_name": f"bot-{i+1}", "amount": 5000}
+            blocks.append(b)
+        resp1 = MagicMock()
+        resp1.content = blocks
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Cancelled."
+        resp2 = MagicMock()
+        resp2.content = [text_block]
+        backend.chat_with_tools.side_effect = [resp1, resp2]
+
+        with patch("builtins.input", return_value="n"):
+            messages = []
+            _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # No tools executed
+        mock_exec.assert_not_called()
+        # Tool results should all be declined
+        tool_result_msg = messages[1]  # user message with tool_results
+        import json
+        for item in tool_result_msg["content"]:
+            data = json.loads(item["content"])
+            assert data["status"] == "declined"
+
+    @patch("odin_bots.cli.chat.execute_tool", return_value={"status": "ok"})
+    def test_batch_mixed_confirm_and_no_confirm(self, mock_exec):
+        """Non-confirmable tools run even when confirmable ones are declined."""
+        backend = MagicMock()
+
+        # One confirmable + one non-confirmable
+        fund_block = MagicMock()
+        fund_block.type = "tool_use"
+        fund_block.id = "id_fund"
+        fund_block.name = "fund"
+        fund_block.input = {"bot_name": "bot-1", "amount": 5000}
+
+        balance_block = MagicMock()
+        balance_block.type = "tool_use"
+        balance_block.id = "id_balance"
+        balance_block.name = "wallet_balance"
+        balance_block.input = {}
+
+        resp1 = MagicMock()
+        resp1.content = [fund_block, balance_block]
+
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "Done."
+        resp2 = MagicMock()
+        resp2.content = [text_block]
+        backend.chat_with_tools.side_effect = [resp1, resp2]
+
+        def fake_meta(name):
+            if name == "fund":
+                return {"requires_confirmation": True}
+            return {"requires_confirmation": False}
+
+        with patch("odin_bots.cli.chat.get_tool_metadata", side_effect=fake_meta), \
+             patch("builtins.input", return_value="n"):
+            messages = []
+            _run_tool_loop(backend, messages, "system", [], "TestBot")
+
+        # Only the non-confirmable tool ran
+        mock_exec.assert_called_once_with("wallet_balance", {})
 
     def test_max_iterations_guard(self):
         """Loop stops after MAX_TOOL_ITERATIONS."""

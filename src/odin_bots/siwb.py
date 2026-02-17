@@ -123,10 +123,11 @@ def bot_has_public_key(bot_name: str) -> bool:
         return False
 
 
-# Lock to serialize icrc2_approve + getPublicKey (update) across threads.
+# Lock to serialize all icrc2_approve + paid-canister-call pairs across threads.
 # ICRC-2 approve sets a total allowance (not additive), so concurrent
 # threads would overwrite each other's approvals. This lock ensures
 # each thread's approve+spend completes before the next begins.
+# Used by: _get_public_key (update), sign_with_fee.
 _fee_payment_lock = threading.Lock()
 
 
@@ -416,14 +417,16 @@ def sign_with_fee(cksigner, wallet_agent, bot_name, message):
     Raises:
         RuntimeError: If fee approval fails or no ckBTC fee token found
     """
-    payment = _approve_fee_if_required(cksigner, wallet_agent)
+    # Serialize approve+sign so concurrent threads don't race on allowance.
+    with _fee_payment_lock:
+        payment = _approve_fee_if_required(cksigner, wallet_agent)
 
-    log(f"  -> Signing message via threshold Schnorr (BIP340)...")
-    sign_result = unwrap(cksigner.sign({
-        "botName": bot_name,
-        "message": message,
-        "payment": payment,
-    }, verify_certificate=get_verify_certificates()))
+        log(f"  -> Signing message via threshold Schnorr (BIP340)...")
+        sign_result = unwrap(cksigner.sign({
+            "botName": bot_name,
+            "message": message,
+            "payment": payment,
+        }, verify_certificate=get_verify_certificates()))
 
     return sign_result
 

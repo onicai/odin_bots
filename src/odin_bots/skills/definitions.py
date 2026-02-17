@@ -67,6 +67,7 @@ TOOLS: list[dict] = [
         "description": (
             "Check wallet ckBTC balance and bot holdings on Odin.fun. "
             "Returns wallet balance, bot balances, and token holdings. "
+            "By default shows ALL bots. "
             "Use ckbtc_minter=true to also show incoming/outgoing BTC status "
             "from the ckBTC minter (pending deposits, withdrawal progress)."
         ),
@@ -77,13 +78,13 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "description": (
                         "Specific bot to check (e.g. 'bot-1'). "
-                        "Omit to check wallet only."
+                        "Omit to check all bots."
                     ),
                 },
                 "all_bots": {
                     "type": "boolean",
-                    "description": "Check all configured bots.",
-                    "default": False,
+                    "description": "Check all configured bots. Default true.",
+                    "default": True,
                 },
                 "ckbtc_minter": {
                     "type": "boolean",
@@ -324,22 +325,32 @@ TOOLS: list[dict] = [
     {
         "name": "fund",
         "description": (
-            "Deposit ckBTC from wallet into a bot's Odin.fun trading account. "
-            "Minimum deposit: 5,000 sats."
+            "Deposit ckBTC from wallet into bot Odin.fun trading accounts. "
+            "Minimum deposit: 5,000 sats per bot. "
+            "Specify bot_names for specific bots or all_bots=true for every bot."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "amount": {
                     "type": "integer",
-                    "description": "Amount in sats to deposit.",
+                    "description": "Amount in sats to deposit per bot.",
                 },
                 "bot_name": {
                     "type": "string",
-                    "description": "Bot name to fund (e.g. 'bot-1').",
+                    "description": "Single bot name (e.g. 'bot-1').",
+                },
+                "bot_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of bot names to fund (e.g. ['bot-12', 'bot-14']).",
+                },
+                "all_bots": {
+                    "type": "boolean",
+                    "description": "Fund all configured bots. Default false.",
                 },
             },
-            "required": ["amount", "bot_name"],
+            "required": ["amount"],
         },
         "requires_confirmation": True,
         "category": "write",
@@ -347,8 +358,9 @@ TOOLS: list[dict] = [
     {
         "name": "trade_buy",
         "description": (
-            "Buy tokens on Odin.fun using BTC from a bot's trading account. "
-            "Minimum trade: 500 sats."
+            "Buy tokens on Odin.fun using BTC from bot trading accounts. "
+            "Minimum trade: 500 sats. "
+            "Specify bot_names for specific bots or all_bots=true for every bot."
         ),
         "input_schema": {
             "type": "object",
@@ -359,14 +371,23 @@ TOOLS: list[dict] = [
                 },
                 "amount": {
                     "type": "integer",
-                    "description": "Amount in sats to spend.",
+                    "description": "Amount in sats to spend per bot.",
                 },
                 "bot_name": {
                     "type": "string",
-                    "description": "Bot name to trade with (e.g. 'bot-1').",
+                    "description": "Single bot name (e.g. 'bot-1').",
+                },
+                "bot_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of bot names to trade with (e.g. ['bot-12', 'bot-14']).",
+                },
+                "all_bots": {
+                    "type": "boolean",
+                    "description": "Trade with all configured bots. Default false.",
                 },
             },
-            "required": ["token_id", "amount", "bot_name"],
+            "required": ["token_id", "amount"],
         },
         "requires_confirmation": True,
         "category": "write",
@@ -375,7 +396,8 @@ TOOLS: list[dict] = [
         "name": "trade_sell",
         "description": (
             "Sell tokens on Odin.fun. Use amount 'all' to sell entire position. "
-            "Minimum trade value: 500 sats."
+            "Minimum trade value: 500 sats. "
+            "Specify bot_names for specific bots or all_bots=true for every bot."
         ),
         "input_schema": {
             "type": "object",
@@ -392,10 +414,19 @@ TOOLS: list[dict] = [
                 },
                 "bot_name": {
                     "type": "string",
-                    "description": "Bot name to trade with (e.g. 'bot-1').",
+                    "description": "Single bot name (e.g. 'bot-1').",
+                },
+                "bot_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of bot names to trade with (e.g. ['bot-12', 'bot-14']).",
+                },
+                "all_bots": {
+                    "type": "boolean",
+                    "description": "Trade with all configured bots. Default false.",
                 },
             },
-            "required": ["token_id", "amount", "bot_name"],
+            "required": ["token_id", "amount"],
         },
         "requires_confirmation": True,
         "category": "write",
@@ -403,7 +434,8 @@ TOOLS: list[dict] = [
     {
         "name": "withdraw",
         "description": (
-            "Withdraw BTC from a bot's Odin.fun account back to the odin-bots wallet."
+            "Withdraw BTC from bot Odin.fun accounts back to the odin-bots wallet. "
+            "Specify bot_names for specific bots or all_bots=true for every bot."
         ),
         "input_schema": {
             "type": "object",
@@ -411,15 +443,24 @@ TOOLS: list[dict] = [
                 "amount": {
                     "type": "string",
                     "description": (
-                        "Amount in sats to withdraw, or 'all' for entire balance."
+                        "Amount in sats to withdraw per bot, or 'all' for entire balance."
                     ),
                 },
                 "bot_name": {
                     "type": "string",
-                    "description": "Bot name to withdraw from (e.g. 'bot-1').",
+                    "description": "Single bot name (e.g. 'bot-1').",
+                },
+                "bot_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of bot names to withdraw from (e.g. ['bot-12', 'bot-14']).",
+                },
+                "all_bots": {
+                    "type": "boolean",
+                    "description": "Withdraw from all configured bots. Default false.",
                 },
             },
-            "required": ["amount", "bot_name"],
+            "required": ["amount"],
         },
         "requires_confirmation": True,
         "category": "write",

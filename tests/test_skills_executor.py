@@ -3,7 +3,42 @@
 import os
 from unittest.mock import patch
 
-from odin_bots.skills.executor import execute_tool, _enable_verify_certificates
+from odin_bots.skills.executor import (
+    execute_tool,
+    _enable_verify_certificates,
+    _resolve_bot_names,
+)
+
+
+class TestResolveBotNames:
+    def test_single_bot_name(self):
+        assert _resolve_bot_names({"bot_name": "bot-1"}) == ["bot-1"]
+
+    def test_bot_names_list(self):
+        result = _resolve_bot_names({"bot_names": ["bot-12", "bot-14"]})
+        assert result == ["bot-12", "bot-14"]
+
+    def test_all_bots(self, odin_project):
+        result = _resolve_bot_names({"all_bots": True})
+        assert len(result) == 3  # default odin_project fixture has 3 bots
+
+    def test_empty_returns_empty(self):
+        assert _resolve_bot_names({}) == []
+
+    def test_bot_names_takes_priority_over_bot_name(self):
+        result = _resolve_bot_names({
+            "bot_names": ["bot-2", "bot-3"],
+            "bot_name": "bot-1",
+        })
+        assert result == ["bot-2", "bot-3"]
+
+    def test_all_bots_takes_priority(self, odin_project):
+        result = _resolve_bot_names({
+            "all_bots": True,
+            "bot_name": "bot-1",
+            "bot_names": ["bot-2"],
+        })
+        assert len(result) == 3  # all configured bots, not the explicit ones
 
 
 class TestExecuteToolDispatch:

@@ -108,6 +108,8 @@ QUOTE_TOPICS = [
 ]
 
 
+
+
 class _Spinner:
     """Animated spinner for the terminal.
 
@@ -207,6 +209,26 @@ def _generate_startup(backend, persona, lang: str) -> tuple[str, str]:
 _MAX_TOOL_ITERATIONS = 10
 
 
+def _fmt_sats(val) -> str:
+    """Format a sats value with thousands separator, safe for None."""
+    if val is None:
+        return "?"
+    try:
+        return f"{val:,}"
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def _bot_target(tool_input: dict) -> str:
+    """Describe the bot target: 'all bots', a list, or a single bot name."""
+    if tool_input.get("all_bots"):
+        return "all bots"
+    names = tool_input.get("bot_names")
+    if names:
+        return ", ".join(names)
+    return tool_input.get("bot_name", "?")
+
+
 def _describe_tool_call(name: str, tool_input: dict) -> str:
     """Return a human-readable description of a tool call for confirmation."""
     if name == "init":
@@ -214,21 +236,21 @@ def _describe_tool_call(name: str, tool_input: dict) -> str:
     if name == "wallet_create":
         return "Create a new wallet identity"
     if name == "fund":
-        return f"Fund {tool_input.get('bot_name')} with {tool_input.get('amount'):,} sats"
+        return f"Fund {_bot_target(tool_input)} with {_fmt_sats(tool_input.get('amount'))} sats each"
     if name == "trade_buy":
         return (
-            f"Buy {tool_input.get('amount'):,} sats of token "
-            f"{tool_input.get('token_id')} via {tool_input.get('bot_name')}"
+            f"Buy {_fmt_sats(tool_input.get('amount'))} sats of token "
+            f"{tool_input.get('token_id')} via {_bot_target(tool_input)}"
         )
     if name == "trade_sell":
         return (
             f"Sell {tool_input.get('amount')} of token "
-            f"{tool_input.get('token_id')} via {tool_input.get('bot_name')}"
+            f"{tool_input.get('token_id')} via {_bot_target(tool_input)}"
         )
     if name == "withdraw":
         return (
             f"Withdraw {tool_input.get('amount')} sats from "
-            f"{tool_input.get('bot_name')}"
+            f"{_bot_target(tool_input)}"
         )
     if name == "wallet_send":
         return (
@@ -284,30 +306,54 @@ def _run_tool_loop(backend, messages: list[dict], system: str,
         # Don't print pre-tool reasoning text — it would show a persona
         # prefix that gets repeated when the final response is printed.
 
-        # Execute each tool call
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        # Separate tool calls by confirmation requirement
+        tool_blocks = [b for b in response.content if b.type == "tool_use"]
+        confirm_blocks = []
+        for b in tool_blocks:
+            meta = get_tool_metadata(b.name)
+            if meta and meta.get("requires_confirmation", False):
+                confirm_blocks.append(b)
 
-            meta = get_tool_metadata(block.name)
-            needs_confirm = meta and meta.get("requires_confirmation", False)
-
-            if needs_confirm:
-                desc = _describe_tool_call(block.name, block.input)
+        # Batch confirmation: ask once for all confirmable tools
+        batch_approved = True
+        if confirm_blocks:
+            if len(confirm_blocks) == 1:
+                desc = _describe_tool_call(
+                    confirm_blocks[0].name, confirm_blocks[0].input,
+                )
                 try:
                     answer = input(f"\n  {desc} [Y/n] ").strip().lower()
                 except (KeyboardInterrupt, EOFError):
                     answer = "n"
                 if answer in ("n", "no"):
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(
-                            {"status": "declined", "error": "User declined."}
-                        ),
-                    })
-                    continue
+                    batch_approved = False
+            else:
+                print(f"\n  Planned operations ({len(confirm_blocks)}):")
+                for b in confirm_blocks:
+                    desc = _describe_tool_call(b.name, b.input)
+                    print(f"    • {desc}")
+                try:
+                    answer = input(
+                        f"\n  Proceed with all {len(confirm_blocks)}? [Y/n] "
+                    ).strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    answer = "n"
+                if answer in ("n", "no"):
+                    batch_approved = False
+
+        # Execute each tool call
+        confirm_ids = {b.id for b in confirm_blocks}
+        tool_results = []
+        for block in tool_blocks:
+            if block.id in confirm_ids and not batch_approved:
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(
+                        {"status": "declined", "error": "User declined."}
+                    ),
+                })
+                continue
 
             with _Spinner(f"Running {block.name}..."):
                 result = execute_tool(block.name, block.input)
@@ -388,7 +434,19 @@ def run_chat(persona_name: str, bot_name: str, verbose: bool = False) -> None:
         system += f"\n\n## Known Tokens\n{known_tokens_table}"
         system += "\nUse these token IDs directly. For unknown tokens, use token_lookup."
 
-    system += f"\n\nYou are trading as bot '{bot_name}'."
+    from odin_bots.config import get_bot_names
+
+    all_bot_names = get_bot_names()
+    if len(all_bot_names) > 1:
+        names_str = ", ".join(all_bot_names)
+        system += (
+            f"\n\nYou manage {len(all_bot_names)} bots: {names_str}. "
+            f"Default bot for single-bot operations: '{bot_name}'. "
+            f"Always use all_bots=true for wallet_balance, fund, trade, and withdraw "
+            f"unless the user specifies particular bots."
+        )
+    else:
+        system += f"\n\nYou are trading as bot '{bot_name}'."
 
     # Verify API access with a startup greeting (also caches goodbye)
     lang = _get_language_code()
