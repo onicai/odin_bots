@@ -25,14 +25,11 @@ TR = "odin_bots.transfers"
 # ---------------------------------------------------------------------------
 
 class TestHelpOutput:
-    def test_no_args_shows_help(self):
+    @patch("odin_bots.cli.chat.run_chat")
+    def test_no_args_starts_chat(self, mock_run_chat):
         result = runner.invoke(app, [])
-        # Typer no_args_is_help returns exit code 0
-        assert result.exit_code in (0, 2)
-        assert "Setup (one time):" in result.output
-        assert "odin-bots init" in result.output
-        assert "odin-bots wallet create" in result.output
-        assert "Step 1." in result.output
+        assert result.exit_code == 0
+        mock_run_chat.assert_called_once()
 
     def test_help_flag(self):
         result = runner.invoke(app, ["--help"])
@@ -49,6 +46,8 @@ class TestHelpOutput:
         assert "withdraw" in result.output
         assert "trade" in result.output
         assert "wallet" in result.output
+        assert "chat" in result.output
+        assert "persona" in result.output
 
     def test_no_deposit_command(self):
         result = runner.invoke(app, ["--help"])

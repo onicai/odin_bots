@@ -14,7 +14,9 @@ from odin_bots.config import (
     create_default_config,
     find_config,
     get_bot_names,
+    get_bot_persona,
     get_cksigner_canister_id,
+    get_default_persona,
     get_network,
     load_config,
     set_network,
@@ -32,10 +34,20 @@ Bitcoin rune trading CLI & SDK
 Setup (one time):
 \b
   odin-bots init             Configures your project with 3 bots
-                             Stored in odin-bots.toml
+                             Creates odin-bots.toml + .env
+\b
+  Get your API key at: https://console.anthropic.com/settings/keys
+  Add it to .env:
+    ANTHROPIC_API_KEY=sk-ant-...
 \b
   odin-bots wallet create    Generate wallet identity
                              Stored in .wallet/identity-private.pem
+\b
+AI chat:
+  odin-bots                    Start chat with default persona
+  odin-bots chat               Same as above (explicit)
+  odin-bots --persona <name>   Chat with a specific persona
+  odin-bots persona list       List available personas
 \b
 How to use your bots:
   All ckBTC amounts are in sats (1 BTC = 100,000,000 sats).
@@ -134,7 +146,7 @@ All ckBTC amounts are in sats (1 BTC = 100,000,000 sats).
 app = typer.Typer(
     name="odin-bots",
     help=HELP_TEXT,
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 
 
@@ -144,6 +156,7 @@ class State:
     all_bots: bool = False
     verbose: bool = False
     network: str = "prd"
+    persona: Optional[str] = None
 
 
 state = State()
@@ -226,15 +239,23 @@ def main_callback(
     network: str = typer.Option(
         "prd", "--network", help="PoAIW network of ckSigner: prd, testing, development"
     ),
+    persona: Optional[str] = typer.Option(
+        None, "--persona", "-p", help="Persona to use for chat"
+    ),
 ):
     """Global options for all commands."""
     state.bot_name = bot  # None when --bot not passed
     state.all_bots = all_bots
     state.verbose = verbose
     state.network = network
+    state.persona = persona
     set_network(network)
     if ctx.invoked_subcommand is not None:
         _print_banner()
+    else:
+        # Bare invocation: start chat with default persona
+        _print_banner()
+        _start_chat()
 
 
 # ---------------------------------------------------------------------------
@@ -247,33 +268,220 @@ app.add_typer(wallet_app, name="wallet", help="Manage wallet identity and funds"
 
 
 # ---------------------------------------------------------------------------
+# Persona subcommand group
+# ---------------------------------------------------------------------------
+
+persona_app = typer.Typer(help="Manage trading personas")
+app.add_typer(persona_app, name="persona")
+
+
+@persona_app.command("list")
+def persona_list():
+    """List all available personas."""
+    from odin_bots.persona import list_personas
+
+    names = list_personas()
+    default = get_default_persona()
+    if not names:
+        print("No personas found.")
+        return
+    print("Available personas:")
+    for name in names:
+        marker = " (default)" if name == default else ""
+        print(f"  {name}{marker}")
+
+
+@persona_app.command("show")
+def persona_show(
+    name: str = typer.Argument(..., help="Persona name to show"),
+):
+    """Show persona details."""
+    from odin_bots.persona import PersonaNotFoundError, load_persona
+
+    try:
+        p = load_persona(name)
+    except PersonaNotFoundError as e:
+        print(f"Error: {e}")
+        raise typer.Exit(1)
+
+    print(f"Name:        {p.name}")
+    print(f"Description: {p.description}")
+    print(f"Voice:       {p.voice}")
+    print(f"Risk:        {p.risk}")
+    print(f"Budget:      {'unlimited' if p.budget_limit == 0 else f'{p.budget_limit:,} sats'}")
+    print(f"Default bot: {p.bot}")
+    print(f"AI backend:  {p.ai_backend}")
+    print(f"AI model:    {p.ai_model}")
+
+
+# ---------------------------------------------------------------------------
+# Chat helper
+# ---------------------------------------------------------------------------
+
+def _start_chat():
+    """Start interactive chat with the active persona."""
+    from odin_bots.cli.chat import run_chat
+
+    persona_name = state.persona or get_default_persona()
+    bot_name = state.bot_name or "bot-1"
+    run_chat(persona_name=persona_name, bot_name=bot_name, verbose=state.verbose)
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
 
 GITIGNORE_CONTENT = """\
 # odin-bots project
+.env
 .wallet/
 .cache/
+.memory/
 """
+
+
+@app.command()
+def chat(
+    persona: Optional[str] = typer.Option(
+        None, "--persona", "-p", help="Persona to use"
+    ),
+    bot: Optional[str] = typer.Option(None, "--bot", "-b", help="Bot name to use"),
+    network: Optional[str] = typer.Option(
+        None, "--network", help="PoAIW network of ckSigner: prd, testing, development"
+    ),
+):
+    """Start interactive chat with a trading persona."""
+    _resolve_network(network)
+    from odin_bots.cli.chat import run_chat
+
+    persona_name = persona or state.persona or get_default_persona()
+    bot_name = bot or state.bot_name or "bot-1"
+    run_chat(persona_name=persona_name, bot_name=bot_name, verbose=state.verbose)
+
+
+ENV_TEMPLATE = (
+    "# Get your API key at: https://console.anthropic.com/settings/keys\n"
+    "ANTHROPIC_API_KEY=your-api-key-here\n"
+)
+
+
+# Required entries in .gitignore — used by both init and upgrade
+GITIGNORE_ENTRIES = [".env", ".wallet/", ".cache/", ".memory/"]
+
+
+def _ensure_env_file() -> None:
+    """Create .env if missing, or add ANTHROPIC_API_KEY if not present."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        env_path.write_text(ENV_TEMPLATE)
+        print("Created .env with ANTHROPIC_API_KEY placeholder")
+        return
+
+    content = env_path.read_text()
+    if "ANTHROPIC_API_KEY" not in content:
+        separator = "" if content.endswith("\n") else "\n"
+        env_path.write_text(content + separator + ENV_TEMPLATE)
+        print("Added ANTHROPIC_API_KEY to .env")
+    else:
+        print(".env already contains ANTHROPIC_API_KEY")
+
+
+def _ensure_gitignore() -> None:
+    """Create .gitignore or add missing entries."""
+    gitignore_path = Path(".gitignore")
+    if not gitignore_path.exists():
+        gitignore_path.write_text(GITIGNORE_CONTENT)
+        print("Created .gitignore")
+        return
+
+    content = gitignore_path.read_text()
+    missing = [e for e in GITIGNORE_ENTRIES if e not in content]
+    if missing:
+        separator = "" if content.endswith("\n") else "\n"
+        additions = "\n".join(missing) + "\n"
+        gitignore_path.write_text(content + separator + additions)
+        print(f"Added to .gitignore: {', '.join(missing)}")
+    else:
+        print(".gitignore is up to date")
+
+
+def _upgrade_config() -> None:
+    """Add missing settings to odin-bots.toml without overwriting existing values."""
+    config_path = Path(CONFIG_FILENAME)
+    content = config_path.read_text()
+    additions: list[str] = []
+
+    # Check for default_persona in [settings]
+    if "default_persona" not in content:
+        additions.append(
+            '\n# Default trading persona\n'
+            'default_persona = "iconfucius"\n'
+        )
+        # Insert after [settings] section — find the right spot
+        if "[settings]" in content:
+            content = content.replace(
+                "[settings]",
+                "[settings]\n"
+                '# Default trading persona\n'
+                'default_persona = "iconfucius"',
+                1,
+            )
+            print("Added default_persona to [settings]")
+        else:
+            # No [settings] section at all — add one
+            content = (
+                "[settings]\n"
+                '# Default trading persona\n'
+                'default_persona = "iconfucius"\n\n'
+            ) + content
+            print("Added [settings] with default_persona")
+
+    # Check for [ai] section (commented out as template)
+    if "[ai]" not in content and "# [ai]" not in content:
+        content += (
+            "\n# AI backend (overrides persona defaults)\n"
+            "# API key is read from .env (ANTHROPIC_API_KEY)\n"
+            "# [ai]\n"
+            '# backend = "claude"\n'
+            '# model = "claude-sonnet-4-5-20250929"\n'
+        )
+        print("Added [ai] section template (commented out)")
+
+    config_path.write_text(content)
 
 
 @app.command()
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
+    upgrade: bool = typer.Option(
+        False, "--upgrade", "-u", help="Upgrade existing project (add new files/settings)"
+    ),
 ):
-    """Initialize a new odin-bots project."""
+    """Initialize or upgrade an odin-bots project."""
     config_path = Path(CONFIG_FILENAME)
 
+    if upgrade:
+        if not config_path.exists():
+            print(f"No {CONFIG_FILENAME} found. Run 'odin-bots init' first.")
+            raise typer.Exit(1)
+        print("Upgrading project...\n")
+        _ensure_env_file()
+        _ensure_gitignore()
+        _upgrade_config()
+        print()
+        print("Done. Run 'odin-bots' to start chatting.")
+        return
+
+    # Always ensure .env exists (even if config already present)
+    _ensure_env_file()
+
     if config_path.exists() and not force:
-        print(f"{CONFIG_FILENAME} already exists. Use --force to overwrite.")
+        print(f"{CONFIG_FILENAME} already exists.")
+        print("Use --force to overwrite, or --upgrade to add new features.")
         raise typer.Exit(1)
 
-    # Write .gitignore
-    gitignore_path = Path(".gitignore")
-    if not gitignore_path.exists() or force:
-        gitignore_path.write_text(GITIGNORE_CONTENT)
-        print("Created .gitignore")
+    _ensure_gitignore()
 
     # Write config
     config_content = create_default_config()
@@ -282,12 +490,15 @@ def init(
 
     print()
     print("Next steps:")
-    print("  1. Create your wallet identity:")
+    print("  1. Get your API key at: https://console.anthropic.com/settings/keys")
+    print("     Add it to .env:")
+    print("     ANTHROPIC_API_KEY=sk-ant-...")
+    print("  2. Create your wallet identity:")
     print("     odin-bots wallet create")
-    print("  2. Fund your wallet:")
+    print("  3. Fund your wallet:")
     print("     odin-bots wallet receive")
-    print("  3. Check your balance:")
-    print("     odin-bots wallet balance")
+    print("  4. Start chatting:")
+    print("     odin-bots")
 
 
 @app.command()
@@ -447,4 +658,9 @@ def main():
     """Entry point for the CLI."""
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
+
+    # Load .env from current directory (if it exists)
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
+
     app()

@@ -20,10 +20,21 @@ brew install automake libtool
 # Setup (one time):
 
     odin-bots init             Configures your project with 3 bots
-                               Stored in odin-bots.toml
+                               Creates odin-bots.toml + .env
+
+    Get your API key at: https://console.anthropic.com/settings/keys
+    Add it to .env:
+      ANTHROPIC_API_KEY=sk-ant-...
 
     odin-bots wallet create    Generate wallet identity
                                Stored in .wallet/identity-private.pem
+
+# AI chat:
+
+    odin-bots                    Start chat with default persona
+    odin-bots chat               Same as above (explicit)
+    odin-bots --persona <name>   Chat with a specific persona
+    odin-bots persona list       List available personas
 
 # How to use your bots:
 
@@ -94,14 +105,20 @@ Each bot gets its own trading identity on Odin.Fun. Add or remove `[bots.*]` sec
 
 ```
 my-bots/
-├── .gitignore             # ignores .wallet/, .cache/
+├── .gitignore             # ignores .env, .wallet/, .cache/, .memory/
+├── .env                   # API keys (ANTHROPIC_API_KEY=...)
 ├── odin-bots.toml         # bot config
 ├── .wallet/               # identity key (BACK UP!)
 │   └── identity-private.pem
-└── .cache/                # delegated identities (auto-created)
-    ├── session_bot-1.json # no backup needed — regenerated
-    ├── session_bot-2.json # when expired (24h lifetime)
-    └── session_bot-3.json
+├── .cache/                # delegated identities (auto-created)
+│   ├── session_bot-1.json # no backup needed — regenerated
+│   ├── session_bot-2.json # when expired (24h lifetime)
+│   └── session_bot-3.json
+└── .memory/               # AI trading memory (per persona)
+    └── iconfucius/
+        ├── trades.md
+        ├── learnings.md
+        └── strategy.md
 ```
 
 ## Open Source & Verifiable

@@ -41,6 +41,9 @@ dependencies = [
     "btclib>=2023.7",
     "bitcoin-utils>=0.7.3",
     "icp-py-core>=2.3.0",
+    "filelock>=3.0",
+    "anthropic>=0.40",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -69,7 +72,7 @@ include = ["odin_bots*"]
 exclude = ["canisters*"]
 
 [tool.setuptools.package-data]
-odin_bots = ["py.typed"]
+odin_bots = ["py.typed", "personas/**/*.toml", "personas/**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

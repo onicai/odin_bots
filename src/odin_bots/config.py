@@ -88,10 +88,11 @@ def fmt_sats(sats, btc_usd_rate) -> str:
 PEM_FILE = ".wallet/identity-private.pem"
 
 DEFAULT_CONFIG = {
-    "settings": {},
+    "settings": {"default_persona": "iconfucius"},
     "bots": {
         "bot-1": {"description": "Bot 1"},
     },
+    "ai": {},
 }
 
 CONFIG_FILENAME = "odin-bots.toml"
@@ -196,6 +197,8 @@ def load_config(reload: bool = False) -> dict:
         result["settings"] = {**DEFAULT_CONFIG["settings"], **config["settings"]}
     if "bots" in config:
         result["bots"] = config["bots"]
+    if "ai" in config:
+        result["ai"] = config["ai"]
 
     _cached_config = result
     _cached_config_path = config_path
@@ -281,6 +284,25 @@ def validate_bot_name(name: str) -> bool:
     return name in config["bots"]
 
 
+def get_default_persona() -> str:
+    """Return the default persona name from config."""
+    config = load_config()
+    return config.get("settings", {}).get("default_persona", "iconfucius")
+
+
+def get_ai_config() -> dict:
+    """Return project-level [ai] config (overrides persona AI settings)."""
+    config = load_config()
+    return config.get("ai", {})
+
+
+def get_bot_persona(bot_name: str) -> str:
+    """Return the persona assigned to a bot, or default persona."""
+    config = load_config()
+    bot = config["bots"].get(bot_name, {})
+    return bot.get("persona", get_default_persona())
+
+
 def create_default_config() -> str:
     """Generate default config file content.
 
@@ -294,9 +316,17 @@ def create_default_config() -> str:
 # See README-security.md for details
 verify_certificates = false
 cache_sessions = true
+default_persona = "iconfucius"
+
+# AI backend (overrides persona defaults)
+# API key via env var: ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
+# [ai]
+# backend = "claude"
+# model = "claude-sonnet-4-5-20250929"
 
 # Bot definitions
 # Each bot gets its own trading identity on Odin.Fun.
+# Optional: persona = "<name>" assigns a trading persona to the bot.
 [bots.bot-1]
 description = "Bot 1"
 
