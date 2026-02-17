@@ -17,17 +17,22 @@ Note: On macOS Apple Silicon, install `automake` and `libtool` before running `p
 brew install automake libtool
 ```
 
-# Setup (one time):
+# Setup
 
-    odin-bots init             Configures your project with 3 bots
-                               Creates odin-bots.toml + .env
+    mkdir my-bots && cd my-bots
+    odin-bots
 
-    Get your API key at: https://console.anthropic.com/settings/keys
-    Add it to .env:
-      ANTHROPIC_API_KEY=sk-ant-...
+That's it. The onboarding wizard runs automatically on first launch:
 
-    odin-bots wallet create    Generate wallet identity
-                               Stored in .wallet/identity-private.pem
+    1. Creates odin-bots.toml (asks how many bots)
+    2. Asks for your Anthropic API key
+       Get one at: https://console.anthropic.com/settings/keys
+    3. Creates your wallet (.wallet/identity-private.pem)
+    4. Shows your deposit address
+    5. Launches the AI chat
+
+Everything is stored in the current directory — run `odin-bots`
+from the same folder next time.
 
 # AI chat:
 
