@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "odin-bots"
-version = "0.7.1"
-description = "Bitcoin rune trading CLI & SDK"
+version = "0.8.0"
+description = "DEPRECATED — use 'iconfucius' instead. pip install iconfucius"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

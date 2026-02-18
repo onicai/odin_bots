@@ -28,20 +28,14 @@ from odin_bots.config import (
 
 # Click's \b marker prevents paragraph rewrapping in --help
 HELP_TEXT = """\
-Bitcoin rune trading CLI & SDK
+Trade with IConfucius at your side — Chain Fusion AI
 
 \b
-Setup (one time):
+Setup:
+  mkdir my-bots && cd my-bots
+  odin-bots
 \b
-  odin-bots init             Configures your project with 3 bots
-                             Creates odin-bots.toml + .env
-\b
-  Get your API key at: https://console.anthropic.com/settings/keys
-  Add it to .env:
-    ANTHROPIC_API_KEY=sk-ant-...
-\b
-  odin-bots wallet create    Generate wallet identity
-                             Stored in .wallet/identity-private.pem
+  The onboarding wizard runs automatically on first launch.
 \b
 AI chat:
   odin-bots                    Start chat with default persona
@@ -798,13 +792,26 @@ def sweep(
             print(f"{bot_name}: withdraw FAILED — {result}")
 
 
+DEPRECATION_MSG = """\
+============================================================
+  odin-bots is DEPRECATED — use 'iconfucius' instead
+============================================================
+
+  pip uninstall odin-bots
+  pip install iconfucius
+
+Then run 'iconfucius' in your project directory.
+iconfucius will detect your existing odin-bots.toml
+and offer to upgrade it.
+
+Your .wallet/, .cache/, and .memory/ directories
+are fully compatible — no data will be lost.
+
+New repo: https://github.com/onicai/IConfucius
+"""
+
+
 def main():
     """Entry point for the CLI."""
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
-
-    # Load .env from current directory (if it exists)
-    from dotenv import load_dotenv
-    load_dotenv(dotenv_path=Path.cwd() / ".env", override=True)
-
-    app()
+    print(DEPRECATION_MSG)
+    raise SystemExit(1)

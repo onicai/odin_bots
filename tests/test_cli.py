@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock, call
 import pytest
 from typer.testing import CliRunner
 
-from odin_bots.cli import app, state, _resolve_bot_names, _print_banner
+from odin_bots.cli import app, state, _resolve_bot_names, _print_banner, main, DEPRECATION_MSG
 from odin_bots.cli.balance import BotBalances
 from odin_bots.config import get_network, set_network
 
@@ -38,7 +38,7 @@ class TestHelpOutput:
     def test_help_flag(self):
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "Setup (one time):" in result.output
+        assert "Setup:" in result.output
         assert "How to use your bots:" in result.output
 
     def test_help_lists_all_commands(self):
@@ -1221,3 +1221,18 @@ class TestStartChatWizard:
 def _calls_with(calls, name):
     """Helper: return calls matching a tool name."""
     return [c for c in calls if c[0] == name]
+
+
+# ---------------------------------------------------------------------------
+# Deprecation (main entry point)
+# ---------------------------------------------------------------------------
+
+class TestDeprecation:
+    def test_main_prints_deprecation_and_exits(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 1
+        output = capsys.readouterr().out
+        assert "DEPRECATED" in output
+        assert "pip install iconfucius" in output
+        assert "pip uninstall odin-bots" in output

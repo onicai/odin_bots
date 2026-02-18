@@ -1,3 +1,3 @@
-"""odin_bots — Bitcoin rune trading CLI & SDK"""
+"""odin_bots — DEPRECATED: use 'iconfucius' instead."""
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"

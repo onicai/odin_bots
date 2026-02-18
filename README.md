@@ -1,158 +1,29 @@
-[![cicd](https://github.com/onicai/odin_bots/actions/workflows/cicd.yml/badge.svg)](https://github.com/onicai/odin_bots/actions/workflows/cicd.yml)
+# odin-bots is deprecated
 
-<p align="center">
-  <img src="brand/logo/transparent_with_tagline_SMALL.png" alt="ODIN-BOTS" width="400">
-</p>
+**This package has been renamed to [`iconfucius`](https://pypi.org/project/iconfucius/).**
 
-<p align="center"><em>Powered by onicai Chain Fusion AI on the Internet Computer.</em></p>
+## Migration
 
----
-
-```
-pip install odin-bots
+```bash
+pip uninstall odin-bots
+pip install iconfucius
 ```
 
-Note: On macOS Apple Silicon, install `automake` and `libtool` before running `pip install`:
-```
-brew install automake libtool
-```
+Then replace `odin-bots` with `iconfucius` in your workflow:
 
-# Setup
-
-    mkdir my-bots && cd my-bots
-    odin-bots
-
-That's it. The onboarding wizard runs automatically on first launch:
-
-    1. Creates odin-bots.toml (asks how many bots)
-    2. Asks for your Anthropic API key
-       Get one at: https://console.anthropic.com/settings/keys
-    3. Creates your wallet (.wallet/identity-private.pem)
-    4. Shows your deposit address
-    5. Launches the AI chat
-
-Everything is stored in the current directory — run `odin-bots`
-from the same folder next time.
-
-# AI chat:
-
-    odin-bots                    Start chat with default persona
-    odin-bots chat               Same as above (explicit)
-    odin-bots --persona <name>   Chat with a specific persona
-    odin-bots persona list       List available personas
-
-# How to use your bots:
-
-    Step 1. Fund your odin-bots wallet:
-            odin-bots wallet receive
-            Send ckBTC or BTC to the address shown.
-            BTC deposits require min 10,000 sats and ~6 confirmations.
-
-    Step 2. Check your wallet balance:
-            odin-bots wallet balance [--monitor]
-
-    Step 3. Fund your bots (deposits ckBTC into Odin.Fun):
-            odin-bots fund <amount> --bot <name>      # in sats
-            odin-bots fund <amount> --all-bots
-
-    Step 4. Buy Runes on Odin.Fun:
-            odin-bots trade buy <token-id> <amount> --bot <name>
-            odin-bots trade buy <token-id> <amount> --all-bots
-
-    Step 5. Check your balances (wallet + bots):
-            odin-bots wallet balance --all-bots [--monitor]
-
-    Step 6. Sell Runes on Odin.Fun:
-            odin-bots trade sell <token-id> <amount> --bot <name>
-            odin-bots trade sell <token-id> <amount> --all-bots
-            # to sell all holdings of a token
-            odin-bots trade sell <token-id> all --bot <name>
-            odin-bots trade sell <token-id> all --all-bots
-            # to sell all holdings of all tokens
-            odin-bots trade sell all-tokens all --bot <name>
-            odin-bots trade sell all-tokens all --all-bots
-
-    Step 7. Withdraw ckBTC from Odin.Fun back to wallet:
-            odin-bots withdraw <amount> --bot <name>
-            odin-bots withdraw all --all-bots
-
-    Or use sweep to sell all tokens + withdraw in one command:
-            odin-bots sweep --bot <name>
-            odin-bots sweep --all-bots
-
-    Step 8. Send ckBTC from wallet to an external ckBTC or BTC account:
-            odin-bots wallet send <amount> <address>
-            (supports both ICRC-1 and BTC addresses)
-
-## Configuration
-
-`odin-bots.toml` (created by `odin-bots init`):
-
-```toml
-[settings]
-# See README-security.md for details
-verify_certificates = false
-cache_sessions = true
-
-[bots.bot-1]
-description = "Bot 1"
-
-[bots.bot-2]
-description = "Bot 2"
-
-[bots.bot-3]
-description = "Bot 3"
+```bash
+cd my-bots
+iconfucius
 ```
 
-Each bot gets its own trading identity on Odin.Fun. Add or remove `[bots.*]` sections as needed.
+`iconfucius` will detect your existing `odin-bots.toml` and offer to upgrade it
+to `iconfucius.toml`. Your `.wallet/`, `.cache/`, and `.memory/` directories
+are fully compatible.
 
-## Project Layout
+## Links
 
-```
-my-bots/
-├── .gitignore             # ignores .env, .wallet/, .cache/, .memory/
-├── .env                   # API keys (ANTHROPIC_API_KEY=...)
-├── odin-bots.toml         # bot config
-├── .wallet/               # identity key (BACK UP!)
-│   └── identity-private.pem
-├── .cache/                # delegated identities (auto-created)
-│   ├── session_bot-1.json # no backup needed — regenerated
-│   ├── session_bot-2.json # when expired (24h lifetime)
-│   └── session_bot-3.json
-└── .memory/               # AI trading memory (per persona)
-    └── iconfucius/
-        ├── trades.md
-        ├── learnings.md
-        └── strategy.md
-```
-
-## Open Source & Verifiable
-
-odin-bots is powered by the onicai ckSigner canister: [`g7qkb-iiaaa-aaaar-qb3za-cai`](https://dashboard.internetcomputer.org/canister/g7qkb-iiaaa-aaaar-qb3za-cai)
-
-The canister code is fully open source with a reproducible build, available at [github.com/onicai/PoAIW](https://github.com/onicai/PoAIW) -> ckSigner branch.
-
-## How It Works
-
-See [README-how-it-works.md](README-how-it-works.md) for technical details.
-
-## Security
-
-See [README-security.md](README-security.md) for security considerations and best practices.
-
-## Contribute
-
-To contribute, see [README-contribute.md](README-contribute.md).
-
-## Status & Disclaimer
-
-This project is in **alpha**. APIs may change without notice.
-
-The software and hosted services are provided "as is", without warranty of any kind. Use at your own risk. The authors and onicai are not liable for any losses — including but not limited to loss of funds, keys, or data — incurred through use of this software or the hosted canister services. No guarantee of availability, correctness, or security is made. You are solely responsible for evaluating the suitability of these services for your use case and for complying with all applicable laws and regulations in your jurisdiction.
-
-## Reference
-
-The Bitcoin rune trading platform is [Odin Fun](https://odin.fun/)
+- New package: [pypi.org/project/iconfucius](https://pypi.org/project/iconfucius/)
+- Source: [github.com/onicai/IConfucius](https://github.com/onicai/IConfucius)
 
 ## License
 
